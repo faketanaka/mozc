@@ -49,7 +49,7 @@
 #include "protocol/commands.pb.h"
 #include "protocol/config.pb.h"
 #include "request/request_test_util.h"
-#include "session/internal/ime_context.h"
+#include "session/ime_context.h"
 #include "session/session.h"
 #include "session/session_handler.h"
 #include "testing/gunit.h"
@@ -159,16 +159,15 @@ class SessionRegressionTest : public testing::TestWithTempUserProfile {
   void ResetSession() {
     session_ = handler_->NewSession();
     commands::Request request;
-    table_ = std::make_unique<composer::Table>();
-    table_->InitializeWithRequestAndConfig(request, config_);
-    session_->SetTable(table_.get());
+    auto table = std::make_shared<composer::Table>();
+    table->InitializeWithRequestAndConfig(request, config_);
+    session_->SetTable(table);
   }
 
   const testing::MockDataManager data_manager_;
   bool orig_use_history_rewriter_;
   std::unique_ptr<SessionHandler> handler_;
   std::unique_ptr<session::Session> session_;
-  std::unique_ptr<composer::Table> table_;
   config::Config config_;
 };
 
@@ -359,7 +358,7 @@ TEST_F(SessionRegressionTest, ConsistencyBetweenPredictionAndSuggestion) {
 
   commands::Request request;
   request_test_util::FillMobileRequest(&request);
-  session_->SetRequest(&request);
+  session_->SetRequest(request);
 
   InitSessionToPrecomposition(session_.get());
   commands::Command command;
@@ -422,7 +421,7 @@ TEST_F(SessionRegressionTest, AutoConversionTest) {
     config::Config config;
     config::ConfigHandler::GetDefaultConfig(&config);
     config.set_use_auto_conversion(true);
-    session_->SetConfig(&config);
+    session_->SetConfig(config);
 
     constexpr char kInputKeys[] = "aiueo.";
     for (size_t i = 0; i < kInputKeys[i]; ++i) {
@@ -442,10 +441,9 @@ TEST_F(SessionRegressionTest, AutoConversionTest) {
     commands::Command command;
 
     InitSessionToPrecomposition(session_.get());
-    config::Config config;
-    config::ConfigHandler::GetConfig(&config);
+    config::Config config = config::ConfigHandler::GetCopiedConfig();
     config.set_use_auto_conversion(true);
-    session_->SetConfig(&config);
+    session_->SetConfig(config);
 
     constexpr char kInputKeys[] = "1234.";
     for (size_t i = 0; i < kInputKeys[i]; ++i) {
@@ -508,8 +506,7 @@ TEST_F(SessionRegressionTest, TransliterationIssue6209563) {
     commands::Command command;
 
     InitSessionToPrecomposition(session_.get());
-    config::Config config;
-    config::ConfigHandler::GetConfig(&config);
+    config::Config config = config::ConfigHandler::GetCopiedConfig();
     config.set_preedit_method(config::Config::KANA);
 
     // Inserts "ち" 5 times
@@ -532,7 +529,7 @@ TEST_F(SessionRegressionTest, CommitT13nSuggestion) {
   // Pending char chunk remains after committing transliteration.
   commands::Request request;
   request_test_util::FillMobileRequest(&request);
-  session_->SetRequest(&request);
+  session_->SetRequest(request);
 
   InitSessionToPrecomposition(session_.get());
 
@@ -553,7 +550,7 @@ TEST_F(SessionRegressionTest, CommitT13nSuggestion) {
 TEST_F(SessionRegressionTest, DeleteCandidateFromHistory) {
   commands::Request request;
   request_test_util::FillMobileRequest(&request);
-  session_->SetRequest(&request);
+  session_->SetRequest(request);
 
   InitSessionToPrecomposition(session_.get());
 

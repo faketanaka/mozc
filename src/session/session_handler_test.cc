@@ -59,13 +59,12 @@
 #include "engine/modules.h"
 #include "protocol/commands.pb.h"
 #include "protocol/config.pb.h"
-#include "session/internal/keymap.h"
-#include "session/session_handler_interface.h"
+#include "session/keymap.h"
+#include "session/session_handler.h"
 #include "session/session_handler_test_util.h"
 #include "testing/gmock.h"
 #include "testing/gunit.h"
 #include "testing/mozctest.h"
-#include "usage_stats/usage_stats_testing_util.h"
 
 ABSL_DECLARE_FLAG(int32_t, max_session_size);
 ABSL_DECLARE_FLAG(int32_t, create_session_min_interval);
@@ -89,7 +88,7 @@ EngineReloadResponse::Status SendMockEngineReloadRequest(
   return command.output().engine_reload_response().status();
 }
 
-bool CreateSession(SessionHandlerInterface &handler, uint64_t *id) {
+bool CreateSession(SessionHandler &handler, uint64_t *id) {
   commands::Command command;
   command.mutable_input()->set_type(commands::Input::CREATE_SESSION);
   command.mutable_input()->mutable_capability()->set_text_deletion(
@@ -101,21 +100,21 @@ bool CreateSession(SessionHandlerInterface &handler, uint64_t *id) {
   return (command.output().error_code() == commands::Output::SESSION_SUCCESS);
 }
 
-bool DeleteSession(SessionHandlerInterface &handler, uint64_t id) {
+bool DeleteSession(SessionHandler &handler, uint64_t id) {
   commands::Command command;
   command.mutable_input()->set_id(id);
   command.mutable_input()->set_type(commands::Input::DELETE_SESSION);
   return handler.EvalCommand(&command);
 }
 
-bool CleanUp(SessionHandlerInterface &handler, uint64_t id) {
+bool CleanUp(SessionHandler &handler, uint64_t id) {
   commands::Command command;
   command.mutable_input()->set_id(id);
   command.mutable_input()->set_type(commands::Input::CLEANUP);
   return handler.EvalCommand(&command);
 }
 
-bool IsGoodSession(SessionHandlerInterface &handler, uint64_t id) {
+bool IsGoodSession(SessionHandler &handler, uint64_t id) {
   commands::Command command;
   command.mutable_input()->set_id(id);
   command.mutable_input()->set_type(commands::Input::SEND_KEY);
@@ -154,15 +153,15 @@ class SessionHandlerTest : public SessionHandlerTestBase {
     invalid_data_request_.set_file_path(mock_path);
     invalid_data_request_.set_magic_number(kOssMagicNumber);
 
-    DataManager mock_data_manager;
-    mock_data_manager.InitFromFile(mock_request_.file_path(),
-                                   mock_request_.magic_number());
-    mock_version_ = mock_data_manager.GetDataVersion();
+    mock_version_ = DataManager::CreateFromFile(mock_request_.file_path(),
+                                                mock_request_.magic_number())
+                        .value()
+                        ->GetDataVersion();
 
-    DataManager oss_data_manager;
-    oss_data_manager.InitFromFile(oss_request_.file_path(),
-                                  oss_request_.magic_number());
-    oss_version_ = oss_data_manager.GetDataVersion();
+    oss_version_ = DataManager::CreateFromFile(oss_request_.file_path(),
+                                               oss_request_.magic_number())
+                       .value()
+                       ->GetDataVersion();
   }
 
   void SetUp() override {
@@ -213,7 +212,6 @@ TEST_F(SessionHandlerTest, MaxSessionSizeTest) {
       uint64_t id = 0;
       EXPECT_TRUE(CreateSession(handler, &id));
       ++expected_session_created_num;
-      EXPECT_COUNT_STATS("SessionCreated", expected_session_created_num);
       ids.push_back(id);
       clock.Advance(absl::Seconds(interval_time));
     }
@@ -237,7 +235,6 @@ TEST_F(SessionHandlerTest, MaxSessionSizeTest) {
       uint64_t id = 0;
       EXPECT_TRUE(CreateSession(handler, &id));
       ++expected_session_created_num;
-      EXPECT_COUNT_STATS("SessionCreated", expected_session_created_num);
       ids.push_back(id);
       clock.Advance(absl::Seconds(interval_time));
     }
@@ -253,7 +250,6 @@ TEST_F(SessionHandlerTest, MaxSessionSizeTest) {
     uint64_t id = 0;
     EXPECT_TRUE(CreateSession(handler, &id));
     ++expected_session_created_num;
-    EXPECT_COUNT_STATS("SessionCreated", expected_session_created_num);
 
     // the oldest id no longer exists
     EXPECT_FALSE(IsGoodSession(handler, oldest_id));
@@ -405,10 +401,6 @@ TEST_F(SessionHandlerTest, ShutdownTest) {
     input->set_type(commands::Input::NO_OPERATION);
     EXPECT_FALSE(handler.EvalCommand(&command));
   }
-
-  EXPECT_COUNT_STATS("ShutDown", 1);
-  // CreateSession and Shutdown.
-  EXPECT_COUNT_STATS("SessionAllEvent", 2);
 }
 
 TEST_F(SessionHandlerTest, ClearHistoryTest) {
@@ -424,7 +416,6 @@ TEST_F(SessionHandlerTest, ClearHistoryTest) {
     input->set_type(commands::Input::CLEAR_USER_HISTORY);
     EXPECT_TRUE(handler.EvalCommand(&command));
     EXPECT_EQ(command.output().id(), session_id);
-    EXPECT_COUNT_STATS("ClearUserHistory", 1);
   }
 
   {
@@ -434,7 +425,6 @@ TEST_F(SessionHandlerTest, ClearHistoryTest) {
     input->set_type(commands::Input::CLEAR_USER_PREDICTION);
     EXPECT_TRUE(handler.EvalCommand(&command));
     EXPECT_EQ(command.output().id(), session_id);
-    EXPECT_COUNT_STATS("ClearUserPrediction", 1);
   }
 
   {
@@ -444,11 +434,7 @@ TEST_F(SessionHandlerTest, ClearHistoryTest) {
     input->set_type(commands::Input::CLEAR_UNUSED_USER_PREDICTION);
     EXPECT_TRUE(handler.EvalCommand(&command));
     EXPECT_EQ(command.output().id(), session_id);
-    EXPECT_COUNT_STATS("ClearUnusedUserPrediction", 1);
   }
-
-  // CreateSession and Clear{History|UserPrediction|UnusedUserPrediction}.
-  EXPECT_COUNT_STATS("SessionAllEvent", 4);
 }
 
 TEST_F(SessionHandlerTest, ElapsedTimeTest) {
@@ -459,13 +445,11 @@ TEST_F(SessionHandlerTest, ElapsedTimeTest) {
   ClockMock clock(absl::FromUnixSeconds(1000));
   Clock::SetClockForUnitTest(&clock);
   EXPECT_TRUE(CreateSession(handler, &id));
-  EXPECT_TIMING_STATS("ElapsedTimeUSec", 0, 1, 0, 0);
   Clock::SetClockForUnitTest(nullptr);
 }
 
 TEST_F(SessionHandlerTest, ConfigTest) {
-  config::Config config;
-  config::ConfigHandler::GetConfig(&config);
+  config::Config config = config::ConfigHandler::GetCopiedConfig();
   SessionHandler handler(CreateMockDataEngine());
 
   {
@@ -476,7 +460,7 @@ TEST_F(SessionHandlerTest, ConfigTest) {
     config.set_session_keymap(config::Config::KOTOERI);
     *input->mutable_config() = config;
     EXPECT_TRUE(handler.EvalCommand(&command));
-    config::ConfigHandler::GetConfig(&config);
+    config = config::ConfigHandler::GetCopiedConfig();
     EXPECT_EQ(command.output().config().session_keymap(),
               config::Config::KOTOERI);
   }
@@ -517,7 +501,7 @@ TEST_F(SessionHandlerTest, ConfigTest) {
     *input->mutable_config() = config;
     EXPECT_TRUE(handler.EvalCommand(&command));
     EXPECT_EQ(command.output().id(), command.input().id());
-    config::ConfigHandler::GetConfig(&config);
+    config = config::ConfigHandler::GetCopiedConfig();
     EXPECT_EQ(command.output().config().session_keymap(), config::Config::ATOK);
   }
   {
@@ -533,15 +517,10 @@ TEST_F(SessionHandlerTest, ConfigTest) {
     EXPECT_EQ(command.output().launch_tool_mode(),
               commands::Output::WORD_REGISTER_DIALOG);
   }
-
-  EXPECT_COUNT_STATS("SetConfig", 1);
-  // CreateSession, GetConfig and SetConfig.
-  EXPECT_COUNT_STATS("SessionAllEvent", 3);
 }
 
 TEST_F(SessionHandlerTest, UpdateComposition) {
-  config::Config config;
-  config::ConfigHandler::GetConfig(&config);
+  config::Config config = config::ConfigHandler::GetCopiedConfig();
   config::ConfigHandler::SetConfig(config);
   SessionHandler handler(CreateMockDataEngine());
 
@@ -575,9 +554,7 @@ TEST_F(SessionHandlerTest, UpdateComposition) {
 }
 
 TEST_F(SessionHandlerTest, KeyMapTest) {
-  config::Config config;
-  config::ConfigHandler::GetConfig(&config);
-  config::ConfigHandler::SetConfig(config);
+  config::Config config = config::ConfigHandler::GetCopiedConfig();
   const keymap::KeyMapManager *msime_keymap;
 
   SessionHandler handler(CreateMockDataEngine());
@@ -799,8 +776,6 @@ TEST_F(SessionHandlerTest, ReloadFromMinimalEngine) {
   absl::string_view data_version = "ReloadFromMinimalEngine";
   EXPECT_CALL(*data_manager, GetDataVersion())
       .WillRepeatedly(Return(data_version));
-  auto modules = std::make_unique<engine::Modules>();
-  CHECK_OK(modules->Init(std::move(data_manager)));
 
   SessionHandler handler(std::move(engine));
   EXPECT_NE(handler.GetDataVersion(), mock_version_);

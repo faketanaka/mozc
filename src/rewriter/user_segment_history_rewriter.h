@@ -49,8 +49,8 @@ namespace mozc {
 
 class UserSegmentHistoryRewriter : public RewriterInterface {
  public:
-  UserSegmentHistoryRewriter(const dictionary::PosMatcher *pos_matcher,
-                             const dictionary::PosGroup *pos_group);
+  UserSegmentHistoryRewriter(const dictionary::PosMatcher &pos_matcher,
+                             const dictionary::PosGroup &pos_group);
 
   bool Rewrite(const ConversionRequest &request,
                Segments *segments) const override;
@@ -90,7 +90,7 @@ class UserSegmentHistoryRewriter : public RewriterInterface {
   };
 
   static Segments MakeLearningSegmentsFromInnerSegments(
-      const Segments &segments);
+      const ConversionRequest &request, const Segments &segments);
 
   // Returns id for RevertEntry
   static uint16_t revert_id();
@@ -98,12 +98,10 @@ class UserSegmentHistoryRewriter : public RewriterInterface {
   bool IsAvailable(const ConversionRequest &request,
                    const Segments &segments) const;
   Score GetScore(const ConversionRequest &request, const Segments &segments,
-                 size_t segment_index, int candidate_index,
-                 bool is_proper_noun_segment) const;
+                 size_t segment_index, int candidate_index) const;
   bool Replaceable(const ConversionRequest &request,
                    const Segment::Candidate &best_candidate,
-                   const Segment::Candidate &target_candidate,
-                   bool is_proper_noun_segment) const;
+                   const Segment::Candidate &target_candidate) const;
   // |revert_entries| will be stored to Segments and used to revert last
   // Finish() operation in Revert().
   void RememberFirstCandidate(

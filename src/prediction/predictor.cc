@@ -107,13 +107,12 @@ std::optional<std::string> GetReading(const ConverterInterface &converter,
 BasePredictor::BasePredictor(
     std::unique_ptr<PredictorInterface> dictionary_predictor,
     std::unique_ptr<PredictorInterface> user_history_predictor,
-    const ConverterInterface *converter)
+    const ConverterInterface &converter)
     : dictionary_predictor_(std::move(dictionary_predictor)),
       user_history_predictor_(std::move(user_history_predictor)),
-      converter_{converter} {
+      converter_(converter) {
   DCHECK(dictionary_predictor_);
   DCHECK(user_history_predictor_);
-  DCHECK(converter_);
 }
 
 void BasePredictor::Finish(const ConversionRequest &request,
@@ -174,7 +173,7 @@ void BasePredictor::PopulateReadingOfCommittedCandidateIfMissing(
   if (!cand->key.empty() || cand->value.empty()) return;
 
   if (cand->content_value == cand->value) {
-    if (std::optional<std::string> key = GetReading(*converter_, cand->value);
+    if (std::optional<std::string> key = GetReading(converter_, cand->value);
         key.has_value()) {
       cand->key = *key;
       cand->content_key = *std::move(key);
@@ -193,7 +192,7 @@ void BasePredictor::PopulateReadingOfCommittedCandidateIfMissing(
     return;
   }
   if (std::optional<std::string> content_key =
-          GetReading(*converter_, cand->content_value);
+          GetReading(converter_, cand->content_value);
       content_key.has_value()) {
     cand->key = absl::StrCat(*content_key, functional_value);
     cand->content_key = *std::move(content_key);
@@ -204,7 +203,7 @@ void BasePredictor::PopulateReadingOfCommittedCandidateIfMissing(
 std::unique_ptr<PredictorInterface> DefaultPredictor::CreateDefaultPredictor(
     std::unique_ptr<PredictorInterface> dictionary_predictor,
     std::unique_ptr<PredictorInterface> user_history_predictor,
-    const ConverterInterface *converter) {
+    const ConverterInterface &converter) {
   return std::make_unique<DefaultPredictor>(std::move(dictionary_predictor),
                                             std::move(user_history_predictor),
                                             converter);
@@ -213,7 +212,7 @@ std::unique_ptr<PredictorInterface> DefaultPredictor::CreateDefaultPredictor(
 DefaultPredictor::DefaultPredictor(
     std::unique_ptr<PredictorInterface> dictionary_predictor,
     std::unique_ptr<PredictorInterface> user_history_predictor,
-    const ConverterInterface *converter)
+    const ConverterInterface &converter)
     : BasePredictor(std::move(dictionary_predictor),
                     std::move(user_history_predictor), converter),
       predictor_name_("DefaultPredictor") {}
@@ -241,10 +240,12 @@ bool DefaultPredictor::PredictForRequest(const ConversionRequest &request,
   ConversionRequest::Options options = request.options();
   options.max_user_history_prediction_candidates_size = size;
   options.max_user_history_prediction_candidates_size_for_zero_query = size;
-  ConversionRequest request_for_prediction = ConversionRequestBuilder()
-                                                 .SetConversionRequest(request)
-                                                 .SetOptions(std::move(options))
-                                                 .Build();
+  ConversionRequest request_for_prediction =
+      ConversionRequestBuilder()
+          .SetConversionRequestView(request)
+          .SetOptions(std::move(options))
+          .SetHistorySegmentsView(*segments)
+          .Build();
   result |= user_history_predictor_->PredictForRequest(request_for_prediction,
                                                        segments);
   remained_size = size - static_cast<size_t>(GetCandidatesSize(*segments));
@@ -259,8 +260,9 @@ bool DefaultPredictor::PredictForRequest(const ConversionRequest &request,
   options2.max_dictionary_prediction_candidates_size = remained_size;
   const ConversionRequest request_for_prediction2 =
       ConversionRequestBuilder()
-          .SetConversionRequest(request_for_prediction)
+          .SetConversionRequestView(request_for_prediction)
           .SetOptions(std::move(options2))
+          .SetHistorySegmentsView(*segments)
           .Build();
   result |= dictionary_predictor_->PredictForRequest(request_for_prediction2,
                                                      segments);
@@ -271,7 +273,7 @@ bool DefaultPredictor::PredictForRequest(const ConversionRequest &request,
 std::unique_ptr<PredictorInterface> MobilePredictor::CreateMobilePredictor(
     std::unique_ptr<PredictorInterface> dictionary_predictor,
     std::unique_ptr<PredictorInterface> user_history_predictor,
-    const ConverterInterface *converter) {
+    const ConverterInterface &converter) {
   return std::make_unique<MobilePredictor>(std::move(dictionary_predictor),
                                            std::move(user_history_predictor),
                                            converter);
@@ -280,7 +282,7 @@ std::unique_ptr<PredictorInterface> MobilePredictor::CreateMobilePredictor(
 MobilePredictor::MobilePredictor(
     std::unique_ptr<PredictorInterface> dictionary_predictor,
     std::unique_ptr<PredictorInterface> user_history_predictor,
-    const ConverterInterface *converter)
+    const ConverterInterface &converter)
     : BasePredictor(std::move(dictionary_predictor),
                     std::move(user_history_predictor), converter),
       predictor_name_("MobilePredictor") {}
@@ -318,8 +320,9 @@ ConversionRequest MobilePredictor::GetRequestForPredict(
       DLOG(ERROR) << "Unexpected request type: " << request.request_type();
   }
   return ConversionRequestBuilder()
-      .SetConversionRequest(request)
+      .SetConversionRequestView(request)
       .SetOptions(std::move(options))
+      .SetHistorySegmentsView(segments)
       .Build();
 }
 

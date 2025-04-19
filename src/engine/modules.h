@@ -41,7 +41,6 @@
 #include "dictionary/dictionary_interface.h"
 #include "dictionary/pos_group.h"
 #include "dictionary/pos_matcher.h"
-#include "dictionary/suppression_dictionary.h"
 #include "engine/supplemental_model_interface.h"
 #include "prediction/single_kanji_prediction_aggregator.h"
 #include "prediction/suggestion_filter.h"
@@ -52,27 +51,13 @@ namespace engine {
 
 class Modules {
  public:
-  Modules() = default;
   Modules(const Modules &) = delete;
   Modules &operator=(const Modules &) = delete;
 
-  absl::Status Init(std::unique_ptr<const DataManager> data_manager);
-
-  // Preset functions must be called before Init.
-  void PresetPosMatcher(
-      std::unique_ptr<const dictionary::PosMatcher> pos_matcher);
-  void PresetSuppressionDictionary(
-      std::unique_ptr<dictionary::SuppressionDictionary>
-          suppression_dictionary);
-  void PresetUserDictionary(
-      std::unique_ptr<dictionary::UserDictionaryInterface> user_dictionary);
-  void PresetSuffixDictionary(
-      std::unique_ptr<dictionary::DictionaryInterface> suffix_dictionary);
-  void PresetDictionary(
-      std::unique_ptr<dictionary::DictionaryInterface> dictionary);
-  void PresetSingleKanjiPredictionAggregator(
-      std::unique_ptr<const prediction::SingleKanjiPredictionAggregator>
-          single_kanji_prediction_aggregator);
+  // Modules must be initialized via Create() method to
+  // keep Modules as immutable as possible.
+  static absl::StatusOr<std::unique_ptr<Modules>> Create(
+      std::unique_ptr<const DataManager> data_manager);
 
   const DataManager &GetDataManager() const {
     // DataManager must be valid.
@@ -80,57 +65,69 @@ class Modules {
     return *data_manager_;
   }
 
-  const dictionary::PosMatcher *GetPosMatcher() const {
-    return pos_matcher_.get();
+  const dictionary::PosMatcher &GetPosMatcher() const {
+    DCHECK(pos_matcher_);
+    return *pos_matcher_;
   }
-  const dictionary::SuppressionDictionary *GetSuppressionDictionary() const {
-    return suppression_dictionary_.get();
-  }
-  dictionary::SuppressionDictionary *GetMutableSuppressionDictionary() {
-    return suppression_dictionary_.get();
-  }
+
   const Connector &GetConnector() const { return connector_; }
-  const Segmenter *GetSegmenter() const { return segmenter_.get(); }
-  dictionary::UserDictionaryInterface *GetUserDictionary() const {
-    return user_dictionary_.get();
+
+  const Segmenter &GetSegmenter() const {
+    DCHECK(segmenter_);
+    return *segmenter_;
   }
-  const dictionary::DictionaryInterface *GetSuffixDictionary() const {
-    return suffix_dictionary_.get();
+
+  dictionary::UserDictionaryInterface &GetUserDictionary() const {
+    DCHECK(user_dictionary_);
+    return *user_dictionary_;
   }
-  const dictionary::DictionaryInterface *GetDictionary() const {
-    return dictionary_.get();
+
+  const dictionary::DictionaryInterface &GetSuffixDictionary() const {
+    DCHECK(suffix_dictionary_);
+    return *suffix_dictionary_;
   }
-  const dictionary::PosGroup *GetPosGroup() const { return pos_group_.get(); }
+
+  const dictionary::DictionaryInterface &GetDictionary() const {
+    DCHECK(dictionary_);
+    return *dictionary_;
+  }
+
+  const dictionary::PosGroup &GetPosGroup() const {
+    DCHECK(pos_group_);
+    return *pos_group_;
+  }
+
   const SuggestionFilter &GetSuggestionFilter() const {
     return suggestion_filter_;
   }
-  const prediction::SingleKanjiPredictionAggregator *
+
+  const prediction::SingleKanjiPredictionAggregator &
   GetSingleKanjiPredictionAggregator() const {
-    return single_kanji_prediction_aggregator_.get();
+    DCHECK(single_kanji_prediction_aggregator_);
+    return *single_kanji_prediction_aggregator_;
   }
+
   const ZeroQueryDict &GetZeroQueryDict() const { return zero_query_dict_; }
   const ZeroQueryDict &GetZeroQueryNumberDict() const {
     return zero_query_number_dict_;
   }
 
-  const engine::SupplementalModelInterface *GetSupplementalModel() const {
-    return supplemental_model_;
-  }
-
-  engine::SupplementalModelInterface *GetMutableSupplementalModel() {
-    return supplemental_model_;
-  }
-
-  void SetSupplementalModel(
-      engine::SupplementalModelInterface *supplemental_model) {
-    supplemental_model_ = supplemental_model;
+  engine::SupplementalModelInterface &GetSupplementalModel() const {
+    DCHECK(supplemental_model_);
+    return *supplemental_model_;
   }
 
  private:
-  bool initialized_ = false;
+  friend class ModulesPresetBuilder;
+  // For the constructor.
+  friend std::unique_ptr<Modules> std::make_unique<Modules>();
+
+  Modules() = default;
+
+  absl::Status Init(std::unique_ptr<const DataManager> data_manager);
+
   std::unique_ptr<const DataManager> data_manager_;
   std::unique_ptr<const dictionary::PosMatcher> pos_matcher_;
-  std::unique_ptr<dictionary::SuppressionDictionary> suppression_dictionary_;
   Connector connector_;
   std::unique_ptr<const Segmenter> segmenter_;
   std::unique_ptr<dictionary::UserDictionaryInterface> user_dictionary_;
@@ -142,8 +139,37 @@ class Modules {
       single_kanji_prediction_aggregator_;
   ZeroQueryDict zero_query_dict_;
   ZeroQueryDict zero_query_number_dict_;
-  // The owner of supplemental_model_ is Engine.
-  engine::SupplementalModelInterface *supplemental_model_ = nullptr;
+
+  // `supplemental_model_` is a class variable and initialized by
+  // a static singleton object. However, it can also be set to a different value
+  // by a PresetBuilder. Since singleton object cannot be deallocated,
+  // `supplemental_model_` is managed using a shared_ptr.
+  std::shared_ptr<engine::SupplementalModelInterface> supplemental_model_;
+};
+
+class ModulesPresetBuilder {
+ public:
+  ModulesPresetBuilder();
+
+  // Preset functions must be called before Build().
+  ModulesPresetBuilder &PresetPosMatcher(
+      std::unique_ptr<const dictionary::PosMatcher> pos_matcher);
+  ModulesPresetBuilder &PresetUserDictionary(
+      std::unique_ptr<dictionary::UserDictionaryInterface> user_dictionary);
+  ModulesPresetBuilder &PresetSuffixDictionary(
+      std::unique_ptr<dictionary::DictionaryInterface> suffix_dictionary);
+  ModulesPresetBuilder &PresetDictionary(
+      std::unique_ptr<dictionary::DictionaryInterface> dictionary);
+  ModulesPresetBuilder &PresetSingleKanjiPredictionAggregator(
+      std::unique_ptr<const prediction::SingleKanjiPredictionAggregator>
+          single_kanji_prediction_aggregator);
+  ModulesPresetBuilder &PresetSupplementalModel(
+      std::unique_ptr<engine::SupplementalModelInterface> supplemental_model);
+  absl::StatusOr<std::unique_ptr<Modules>> Build(
+      std::unique_ptr<const DataManager> data_manager);
+
+ private:
+  std::unique_ptr<Modules> modules_;
 };
 
 }  // namespace engine

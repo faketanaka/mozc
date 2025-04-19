@@ -47,7 +47,6 @@
 #include "converter/segments_matchers.h"
 #include "data_manager/testing/mock_data_manager.h"
 #include "dictionary/dictionary_interface.h"
-#include "dictionary/user_dictionary_stub.h"
 #include "engine/modules.h"
 #include "protocol/commands.pb.h"
 #include "request/conversion_request.h"
@@ -59,7 +58,6 @@ namespace mozc {
 namespace {
 
 using dictionary::DictionaryInterface;
-using dictionary::UserDictionaryStub;
 using ::testing::StrEq;
 
 void SetCandidate(absl::string_view key, absl::string_view value,
@@ -86,29 +84,29 @@ class MockDataAndImmutableConverter {
   // first argument dictionary but doesn't the second because the same
   // dictionary may be passed to the arguments.
   MockDataAndImmutableConverter() {
-    modules_.PresetUserDictionary(std::make_unique<UserDictionaryStub>());
-    CHECK_OK(modules_.Init(std::make_unique<testing::MockDataManager>()));
-
-    immutable_converter_ = std::make_unique<ImmutableConverter>(modules_);
+    modules_ =
+        engine::Modules::Create(std::make_unique<testing::MockDataManager>())
+            .value();
+    immutable_converter_ = std::make_unique<ImmutableConverter>(*modules_);
     CHECK(immutable_converter_);
   }
 
   MockDataAndImmutableConverter(
       std::unique_ptr<DictionaryInterface> dictionary,
       std::unique_ptr<DictionaryInterface> suffix_dictionary) {
-    modules_.PresetUserDictionary(std::make_unique<UserDictionaryStub>());
-    modules_.PresetDictionary(std::move(dictionary));
-    modules_.PresetSuffixDictionary(std::move(suffix_dictionary));
-    CHECK_OK(modules_.Init(std::make_unique<testing::MockDataManager>()));
-
-    immutable_converter_ = std::make_unique<ImmutableConverter>(modules_);
+    modules_ = engine::ModulesPresetBuilder()
+                   .PresetDictionary(std::move(dictionary))
+                   .PresetSuffixDictionary(std::move(suffix_dictionary))
+                   .Build(std::make_unique<testing::MockDataManager>())
+                   .value();
+    immutable_converter_ = std::make_unique<ImmutableConverter>(*modules_);
     CHECK(immutable_converter_);
   }
 
   ImmutableConverter *GetConverter() { return immutable_converter_.get(); }
 
  private:
-  engine::Modules modules_;
+  std::unique_ptr<engine::Modules> modules_;
   std::unique_ptr<ImmutableConverter> immutable_converter_;
 };
 
@@ -131,6 +129,41 @@ TEST(ImmutableConverterTest, KeepKeyForPrediction) {
   EXPECT_EQ(segments.segments_size(), 1);
   EXPECT_GT(segments.segment(0).candidates_size(), 0);
   EXPECT_EQ(segments.segment(0).key(), kRequestKey);
+}
+
+TEST(ImmutableConverterTest, ResegmentTest) {
+  std::unique_ptr<MockDataAndImmutableConverter> data_and_converter(
+      new MockDataAndImmutableConverter);
+  Segments segments;
+  const ConversionRequest request =
+      ConversionRequestBuilder()
+          .SetOptions({.request_type = ConversionRequest::CONVERSION,
+                       .max_conversion_candidates_size = 10})
+          .Build();
+
+  {
+    segments.Clear();
+    Segment *segment = segments.add_segment();
+    const std::string kRequestKey = "1ねんせい";
+    segment->set_key(kRequestKey);
+    EXPECT_TRUE(data_and_converter->GetConverter()->ConvertForRequest(
+        request, &segments));
+    EXPECT_EQ(segments.segments_size(), 2);
+    EXPECT_EQ(segments.segment(0).candidate(0).value, "1");
+    EXPECT_EQ(segments.segment(1).candidate(0).value, "年生");
+  }
+
+  {
+    segments.Clear();
+    Segment *segment = segments.add_segment();
+    const std::string kRequestKey = "ちゅう2";
+    segment->set_key(kRequestKey);
+    EXPECT_TRUE(data_and_converter->GetConverter()->ConvertForRequest(
+        request, &segments));
+    EXPECT_EQ(segments.segments_size(), 2);
+    EXPECT_EQ(segments.segment(0).candidate(0).value, "中");
+    EXPECT_EQ(segments.segment(1).candidate(0).value, "2");
+  }
 }
 
 TEST(ImmutableConverterTest, DummyCandidatesCost) {
@@ -463,7 +496,7 @@ bool AutoPartialSuggestionTestHelper(const ConversionRequest &request) {
   EXPECT_EQ(segments.conversion_segments_size(), 1);
   EXPECT_LT(0, segments.segment(0).candidates_size());
   bool includes_only_first = false;
-  const std::string &segment_key = segments.segment(0).key();
+  absl::string_view segment_key = segments.segment(0).key();
   for (size_t i = 0; i < segments.segment(0).candidates_size(); ++i) {
     const Segment::Candidate &cand = segments.segment(0).candidate(i);
     if (cand.key.size() < segment_key.size() &&
@@ -477,17 +510,19 @@ bool AutoPartialSuggestionTestHelper(const ConversionRequest &request) {
 }  // namespace
 
 TEST(ImmutableConverterTest, EnableAutoPartialSuggestion) {
-  const ConversionRequest conversion_request = ConversionRequestBuilder()
-      .SetOptions({.create_partial_candidates = true})
-      .Build();
+  const ConversionRequest conversion_request =
+      ConversionRequestBuilder()
+          .SetOptions({.create_partial_candidates = true})
+          .Build();
   EXPECT_TRUE(conversion_request.create_partial_candidates());
   EXPECT_TRUE(AutoPartialSuggestionTestHelper(conversion_request));
 }
 
 TEST(ImmutableConverterTest, DisableAutoPartialSuggestion) {
-  const ConversionRequest conversion_request = ConversionRequestBuilder()
-      .SetOptions({.create_partial_candidates = false})
-      .Build();
+  const ConversionRequest conversion_request =
+      ConversionRequestBuilder()
+          .SetOptions({.create_partial_candidates = false})
+          .Build();
   EXPECT_FALSE(AutoPartialSuggestionTestHelper(conversion_request));
 }
 
@@ -529,8 +564,6 @@ TEST(ImmutableConverterTest, FirstInnerSegment) {
 TEST(ImmutableConverterTest, FirstInnerSegmentFiltering) {
   commands::Request request;
   request_test_util::FillMobileRequest(&request);
-  request.mutable_decoder_experiment_params()
-      ->set_enable_realtime_conversion_candidate_checker(true);
   const ConversionRequest conversion_request =
       ConversionRequestBuilder()
           .SetRequest(request)
@@ -554,8 +587,8 @@ TEST(ImmutableConverterTest, FirstInnerSegmentFiltering) {
         conversion_request, &segments));
 
     EXPECT_THAT(*segment, ContainsCandidate(ValueIs("した時")));
-    // The same segment structure
-    EXPECT_THAT(*segment, Not(ContainsCandidate(ValueIs("したとき"))));
+    // The same segment structure, but included by char coverage rule.
+    EXPECT_THAT(*segment, ContainsCandidate(ValueIs("したとき")));
   }
   {
     Segments segments;
@@ -565,80 +598,7 @@ TEST(ImmutableConverterTest, FirstInnerSegmentFiltering) {
         conversion_request, &segments));
 
     EXPECT_THAT(*segment, ContainsCandidate(ValueIs("の時")));
-    // The same segment structure
-    EXPECT_THAT(*segment, Not(ContainsCandidate(ValueIs("のとき"))));
-  }
-  {
-    Segments segments;
-    Segment *segment = segments.add_segment();
-    segment->set_key("かえる");
-    EXPECT_TRUE(data_and_converter->GetConverter()->ConvertForRequest(
-        conversion_request, &segments));
-
-    EXPECT_THAT(*segment, ContainsCandidate(ValueIs("換える")));
-    EXPECT_THAT(*segment, ContainsCandidate(ValueIs("代える")));
-    EXPECT_THAT(*segment, ContainsCandidate(ValueIs("買える")));
-    // Filtered by cost diff
-    EXPECT_THAT(*segment, Not(ContainsCandidate(ValueIs("飼える"))));
-  }
-  {
-    Segments segments;
-    Segment *segment = segments.add_segment();
-    segment->set_key("くるまでこうどうした");
-    EXPECT_TRUE(data_and_converter->GetConverter()->ConvertForRequest(
-        conversion_request, &segments));
-
-    EXPECT_THAT(*segment, ContainsCandidate(ValueIs("車で行動した")));
-    EXPECT_THAT(*segment, ContainsCandidate(ValueIs("車で")));
-    EXPECT_THAT(*segment, ContainsCandidate(ValueIs("来るまで")));
-    EXPECT_THAT(*segment, ContainsCandidate(ValueIs("くるまで")));
-  }
-}
-
-TEST(ImmutableConverterTest, FirstInnerSegmentFilteringParams) {
-  commands::Request request;
-  request_test_util::FillMobileRequest(&request);
-  request.mutable_decoder_experiment_params()
-      ->set_enable_realtime_conversion_candidate_checker(true);
-  request.mutable_decoder_experiment_params()
-      ->set_realtime_conversion_single_segment_char_coverage(2);
-  request.mutable_decoder_experiment_params()
-      ->set_realtime_conversion_candidate_checker_cost_max_diff(
-          4605);  // 500*log(10000);
-  const ConversionRequest conversion_request =
-      ConversionRequestBuilder()
-          .SetRequest(request)
-          .SetOptions({
-              .request_type = ConversionRequest::PREDICTION,
-              .max_conversion_candidates_size = 100,
-              .create_partial_candidates = true,
-          })
-          .Build();
-
-  auto data_and_converter = std::make_unique<MockDataAndImmutableConverter>();
-  constexpr auto ValueIs = [](const auto &value) {
-    return Field(&Segment::Candidate::value, StrEq(value));
-  };
-
-  {
-    Segments segments;
-    Segment *segment = segments.add_segment();
-    segment->set_key("したとき");
-    EXPECT_TRUE(data_and_converter->GetConverter()->ConvertForRequest(
-        conversion_request, &segments));
-
-    EXPECT_THAT(*segment, ContainsCandidate(ValueIs("した時")));
-    // Not enough char coverage
-    EXPECT_THAT(*segment, Not(ContainsCandidate(ValueIs("したとき"))));
-  }
-  {
-    Segments segments;
-    Segment *segment = segments.add_segment();
-    segment->set_key("のとき");
-    EXPECT_TRUE(data_and_converter->GetConverter()->ConvertForRequest(
-        conversion_request, &segments));
-
-    EXPECT_THAT(*segment, ContainsCandidate(ValueIs("の時")));
+    // The same segment structure, included by char coverage.
     EXPECT_THAT(*segment, ContainsCandidate(ValueIs("のとき")));
   }
   {
@@ -651,7 +611,7 @@ TEST(ImmutableConverterTest, FirstInnerSegmentFilteringParams) {
     EXPECT_THAT(*segment, ContainsCandidate(ValueIs("換える")));
     EXPECT_THAT(*segment, ContainsCandidate(ValueIs("代える")));
     EXPECT_THAT(*segment, ContainsCandidate(ValueIs("買える")));
-    // cost diff < cost_max_diff
+    // Included by cost diff
     EXPECT_THAT(*segment, ContainsCandidate(ValueIs("飼える")));
   }
   {

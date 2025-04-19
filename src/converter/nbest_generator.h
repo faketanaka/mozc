@@ -44,8 +44,8 @@
 #include "converter/node.h"
 #include "converter/segmenter.h"
 #include "converter/segments.h"
+#include "dictionary/dictionary_interface.h"
 #include "dictionary/pos_matcher.h"
-#include "dictionary/suppression_dictionary.h"
 #include "prediction/suggestion_filter.h"
 #include "request/conversion_request.h"
 
@@ -98,11 +98,11 @@ class NBestGenerator {
   };
 
   // Try to enumerate N-best results between begin_node and end_node.
-  NBestGenerator(
-      const dictionary::SuppressionDictionary *suppression_dictionary,
-      const Segmenter *segmenter, const Connector &connector,
-      const dictionary::PosMatcher *pos_matcher, const Lattice *lattice,
-      const SuggestionFilter &suggestion_filter);
+  NBestGenerator(const dictionary::UserDictionaryInterface &user_dictionary,
+                 const Segmenter &segmenter, const Connector &connector,
+                 const dictionary::PosMatcher &pos_matcher,
+                 const Lattice &lattice,
+                 const SuggestionFilter &suggestion_filter);
   NBestGenerator(const NBestGenerator &) = delete;
   NBestGenerator &operator=(const NBestGenerator &) = delete;
   ~NBestGenerator() = default;
@@ -113,7 +113,7 @@ class NBestGenerator {
 
   // Set candidates.
   void SetCandidates(const ConversionRequest &request,
-                     const std::string &original_key, size_t expand_size,
+                     absl::string_view original_key, size_t expand_size,
                      absl::Nonnull<Segment *> segment);
 
  private:
@@ -170,11 +170,11 @@ class NBestGenerator {
 
   // Iterator:
   // Can obtain N-best results by calling Next() in sequence.
-  bool Next(const ConversionRequest &request, const std::string &original_key,
+  bool Next(const ConversionRequest &request, absl::string_view original_key,
             Segment::Candidate &candidate);
 
   int InsertTopResult(const ConversionRequest &request,
-                      const std::string &original_key,
+                      absl::string_view original_key,
                       Segment::Candidate &candidate);
 
   bool MakeCandidateFromBestPath(Segment::Candidate &candidate);
@@ -185,7 +185,7 @@ class NBestGenerator {
                      absl::Span<const absl::Nonnull<const Node *>> nodes) const;
 
   converter::CandidateFilter::ResultType MakeCandidateFromElement(
-      const ConversionRequest &request, const std::string &original_key,
+      const ConversionRequest &request, absl::string_view original_key,
       const QueueElement &element, Segment::Candidate &candidate);
 
   void FillInnerSegmentInfo(absl::Span<const absl::Nonnull<const Node *>> odes,
@@ -211,11 +211,11 @@ class NBestGenerator {
       int32_t structure_gx, int32_t w_gx);
 
   // References to relevant modules.
-  const dictionary::SuppressionDictionary *suppression_dictionary_;
-  const Segmenter *segmenter_;
+  const dictionary::UserDictionaryInterface &user_dictionary_;
+  const Segmenter &segmenter_;
   const Connector &connector_;
-  const dictionary::PosMatcher *pos_matcher_;
-  const Lattice *lattice_;
+  const dictionary::PosMatcher &pos_matcher_;
+  const Lattice &lattice_;
 
   absl::Nullable<const Node *> begin_node_ = nullptr;
   absl::Nullable<const Node *> end_node_ = nullptr;

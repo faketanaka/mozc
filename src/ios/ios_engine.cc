@@ -46,7 +46,6 @@
 #include "protocol/commands.pb.h"
 #include "protocol/user_dictionary_storage.pb.h"
 #include "session/session_handler.h"
-#include "session/session_handler_interface.h"
 
 namespace mozc {
 namespace ios {
@@ -59,7 +58,7 @@ const char *kIosSystemDictionaryName = "iOS_system_dictionary";
 
 std::unique_ptr<EngineInterface> CreateMobileEngine(
     const std::string &data_file_path) {
-  absl::StatusOr<std::unique_ptr<DataManager>> data_manager =
+  absl::StatusOr<std::unique_ptr<const DataManager>> data_manager =
       DataManager::CreateFromFile(data_file_path);
   if (!data_manager.ok()) {
     LOG(ERROR)
@@ -76,7 +75,7 @@ std::unique_ptr<EngineInterface> CreateMobileEngine(
   return *std::move(engine);
 }
 
-std::unique_ptr<SessionHandlerInterface> CreateSessionHandler(
+std::unique_ptr<SessionHandler> CreateSessionHandler(
     const std::string &data_file_path) {
   std::unique_ptr<EngineInterface> engine = CreateMobileEngine(data_file_path);
   return std::make_unique<SessionHandler>(std::move(engine));
@@ -178,8 +177,7 @@ bool IosEngine::SetMobileRequest(const std::string &keyboard_layout,
 }
 
 void IosEngine::FillMobileConfig(config::Config *config) {
-  config->Clear();
-  config::ConfigHandler::GetConfig(config);
+  *config = config::ConfigHandler::GetCopiedConfig();
   config->set_session_keymap(config::Config::MOBILE);
   config->set_use_kana_modifier_insensitive_conversion(true);
   config->set_space_character_form(config::Config::FUNDAMENTAL_HALF_WIDTH);

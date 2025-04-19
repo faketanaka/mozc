@@ -64,8 +64,8 @@
 #include "config/config_handler.h"
 #include "converter/segments.h"
 #include "data_manager/testing/mock_data_manager.h"
+#include "dictionary/dictionary_interface.h"
 #include "dictionary/dictionary_mock.h"
-#include "dictionary/suppression_dictionary.h"
 #include "engine/modules.h"
 #include "engine/supplemental_model_interface.h"
 #include "engine/supplemental_model_mock.h"
@@ -79,8 +79,6 @@
 #include "testing/gmock.h"
 #include "testing/gunit.h"
 #include "testing/mozctest.h"
-#include "usage_stats/usage_stats.h"
-#include "usage_stats/usage_stats_testing_util.h"
 
 namespace mozc::prediction {
 namespace {
@@ -89,7 +87,7 @@ using ::mozc::commands::Request;
 using ::mozc::composer::TypeCorrectedQuery;
 using ::mozc::config::Config;
 using ::mozc::dictionary::MockDictionary;
-using ::mozc::dictionary::SuppressionDictionary;
+using ::mozc::dictionary::UserDictionaryInterface;
 using ::testing::_;
 using ::testing::Return;
 
@@ -101,22 +99,23 @@ class UserHistoryPredictorTest : public testing::TestWithTempUserProfile {
     request_.Clear();
     config::ConfigHandler::GetDefaultConfig(&config_);
     config_.set_use_typing_correction(true);
-    table_ = std::make_unique<composer::Table>();
-    composer_ = composer::Composer(table_.get(), &request_, &config_);
+    table_ = std::make_shared<composer::Table>();
+    composer_ = composer::Composer(table_, request_, config_);
     data_and_predictor_ = CreateDataAndPredictor();
-
-    mozc::usage_stats::UsageStats::ClearAllStatsForTest();
   }
 
-  void TearDown() override {
-    mozc::usage_stats::UsageStats::ClearAllStatsForTest();
-  }
+  void TearDown() override {}
 
   ConversionRequest CreateConversionRequestWithOptions(
       const composer::Composer &composer,
       ConversionRequest::Options &&options) const {
-    return ConversionRequest(composer, request_, context_, config_,
-                             std::move(options));
+    return ConversionRequestBuilder()
+        .SetComposer(composer_)
+        .SetRequestView(request_)
+        .SetContextView(context_)
+        .SetConfigView(config_)
+        .SetOptions(std::move(options))
+        .Build();
   }
 
   ConversionRequest CreateConversionRequest(
@@ -125,8 +124,13 @@ class UserHistoryPredictorTest : public testing::TestWithTempUserProfile {
         .max_user_history_prediction_candidates_size = 10,
         .max_user_history_prediction_candidates_size_for_zero_query = 10,
     };
-    return ConversionRequest(composer, request_, context_, config_,
-                             std::move(options));
+    return ConversionRequestBuilder()
+        .SetComposer(composer_)
+        .SetRequestView(request_)
+        .SetContextView(context_)
+        .SetConfigView(config_)
+        .SetOptions(std::move(options))
+        .Build();
   }
 
   UserHistoryPredictor *GetUserHistoryPredictor() {
@@ -145,8 +149,8 @@ class UserHistoryPredictorTest : public testing::TestWithTempUserProfile {
     return predictor;
   }
 
-  SuppressionDictionary *GetSuppressionDictionary() {
-    return data_and_predictor_->modules.GetMutableSuppressionDictionary();
+  UserDictionaryInterface &GetUserDictionary() {
+    return data_and_predictor_->modules->GetUserDictionary();
   }
 
   bool IsSuggested(UserHistoryPredictor *predictor, const absl::string_view key,
@@ -441,35 +445,31 @@ class UserHistoryPredictorTest : public testing::TestWithTempUserProfile {
     return std::nullopt;
   }
 
-  void SetSupplementalModel(
-      engine::SupplementalModelInterface *supplemental_model) {
-    data_and_predictor_->modules.SetSupplementalModel(supplemental_model);
-  }
-
   composer::Composer composer_;
-  std::unique_ptr<composer::Table> table_;
+  std::shared_ptr<composer::Table> table_;
   Config config_;
   Request request_;
   commands::Context context_;
 
  private:
   struct DataAndPredictor {
-    engine::Modules modules;
+    std::unique_ptr<engine::Modules> modules;
     std::unique_ptr<UserHistoryPredictor> predictor;
   };
 
   std::unique_ptr<DataAndPredictor> CreateDataAndPredictor() const {
     auto ret = std::make_unique<DataAndPredictor>();
-    ret->modules.PresetDictionary(std::make_unique<MockDictionary>());
-    CHECK_OK(ret->modules.Init(std::make_unique<testing::MockDataManager>()));
+    ret->modules = engine::ModulesPresetBuilder()
+                       .PresetDictionary(std::make_unique<MockDictionary>())
+                       .Build(std::make_unique<testing::MockDataManager>())
+                       .value();
     ret->predictor =
-        std::make_unique<UserHistoryPredictor>(ret->modules, false);
+        std::make_unique<UserHistoryPredictor>(*ret->modules, false);
     ret->predictor->WaitForSyncer();
     return ret;
   }
 
   std::unique_ptr<DataAndPredictor> data_and_predictor_;
-  mozc::usage_stats::scoped_usage_stats_enabler usage_stats_enabler_;
 };
 
 TEST_F(UserHistoryPredictorTest, UserHistoryPredictorTest) {
@@ -1370,8 +1370,13 @@ TEST_F(UserHistoryPredictorTest, ZeroQuerySuggestionTest) {
     SetUpInputForSuggestionWithHistory("", "たろうは", "太郎は", &composer_,
                                        &segments);
     // convreq5 is not zero query suggestion unlike other convreqs.
-    const ConversionRequest convreq5(composer_, non_zero_query_request, context,
-                                     config_, {});
+    const ConversionRequest convreq5 =
+        ConversionRequestBuilder()
+            .SetComposer(composer_)
+            .SetRequestView(non_zero_query_request)
+            .SetContextView(context)
+            .SetConfigView(config_)
+            .Build();
     EXPECT_FALSE(predictor->PredictForRequest(convreq5, &segments));
 
     const ConversionRequest convreq6 = SetUpInputForSuggestionWithHistory(
@@ -1411,8 +1416,14 @@ TEST_F(UserHistoryPredictorTest, ZeroQuerySuggestionTest) {
     segments.mutable_segment(0)->set_segment_type(Segment::HISTORY);
 
     // Zero query suggestion is disabled.
-    const ConversionRequest non_zero_query_convreq(
-        composer_, non_zero_query_request, context, config_, {});
+    const ConversionRequest non_zero_query_convreq =
+        ConversionRequestBuilder()
+            .SetComposer(composer_)
+            .SetRequestView(non_zero_query_request)
+            .SetContextView(context)
+            .SetConfigView(config_)
+            .Build();
+
     AddSegment("", &segments);  // empty request
     EXPECT_FALSE(
         predictor->PredictForRequest(non_zero_query_convreq, &segments));
@@ -2121,11 +2132,16 @@ TEST_F(UserHistoryPredictorTest, IsValidEntry) {
   EXPECT_FALSE(predictor->IsValidEntry(entry));
   EXPECT_FALSE(predictor->IsValidEntryIgnoringRemovedField(entry));
 
-  SuppressionDictionary *d = GetSuppressionDictionary();
-  DCHECK(d);
-  d->Lock();
-  d->AddEntry("foo", "bar");
-  d->UnLock();
+  // Set up suppression dictionary
+  {
+    user_dictionary::UserDictionaryStorage storage;
+    auto *entry = storage.add_dictionaries()->add_entries();
+    entry->set_key("foo");
+    entry->set_value("bar");
+    entry->set_pos(user_dictionary::UserDictionary::SUPPRESSION_WORD);
+    GetUserDictionary().Load(storage);
+    GetUserDictionary().WaitForReloader();
+  }
 
   entry.set_key("key");
   entry.set_value("value");
@@ -2136,10 +2152,6 @@ TEST_F(UserHistoryPredictorTest, IsValidEntry) {
   entry.set_value("bar");
   EXPECT_FALSE(predictor->IsValidEntry(entry));
   EXPECT_FALSE(predictor->IsValidEntryIgnoringRemovedField(entry));
-
-  d->Lock();
-  d->Clear();
-  d->UnLock();
 }
 
 TEST_F(UserHistoryPredictorTest, IsValidSuggestion) {
@@ -2923,7 +2935,6 @@ TEST_F(UserHistoryPredictorTest, GetMatchTypeFromInputKana) {
 
 TEST_F(UserHistoryPredictorTest, GetInputKeyFromSegmentsRoman) {
   table_->LoadFromFile("system://romanji-hiragana.tsv");
-  composer_.SetTable(table_.get());
   Segments segments;
 
   const ConversionRequest convreq =
@@ -2945,7 +2956,6 @@ TEST_F(UserHistoryPredictorTest, GetInputKeyFromSegmentsRoman) {
 
 TEST_F(UserHistoryPredictorTest, GetInputKeyFromSegmentsRomanRandom) {
   table_->LoadFromFile("system://romanji-hiragana.tsv");
-  composer_.SetTable(table_.get());
   Segments segments;
   Random random;
 
@@ -2966,7 +2976,6 @@ TEST_F(UserHistoryPredictorTest, GetInputKeyFromSegmentsRomanRandom) {
 // input_key != base by composer modification.
 TEST_F(UserHistoryPredictorTest, GetInputKeyFromSegmentsShouldNotCrash) {
   table_->LoadFromFile("system://romanji-hiragana.tsv");
-  composer_.SetTable(table_.get());
   Segments segments;
 
   {
@@ -2982,7 +2991,6 @@ TEST_F(UserHistoryPredictorTest, GetInputKeyFromSegmentsShouldNotCrash) {
 
 TEST_F(UserHistoryPredictorTest, GetInputKeyFromSegmentsRomanN) {
   table_->LoadFromFile("system://romanji-hiragana.tsv");
-  composer_.SetTable(table_.get());
   Segments segments;
 
   {
@@ -3058,7 +3066,6 @@ TEST_F(UserHistoryPredictorTest, GetInputKeyFromSegmentsRomanN) {
 
 TEST_F(UserHistoryPredictorTest, GetInputKeyFromSegmentsFlickN) {
   table_->LoadFromFile("system://flick-hiragana.tsv");
-  composer_.SetTable(table_.get());
   Segments segments;
 
   {
@@ -3083,7 +3090,6 @@ TEST_F(UserHistoryPredictorTest, GetInputKeyFromSegmentsFlickN) {
 
 TEST_F(UserHistoryPredictorTest, GetInputKeyFromSegments12KeyN) {
   table_->LoadFromFile("system://12keys-hiragana.tsv");
-  composer_.SetTable(table_.get());
   Segments segments;
 
   {
@@ -3108,7 +3114,6 @@ TEST_F(UserHistoryPredictorTest, GetInputKeyFromSegments12KeyN) {
 
 TEST_F(UserHistoryPredictorTest, GetInputKeyFromSegmentsKana) {
   table_->LoadFromFile("system://kana.tsv");
-  composer_.SetTable(table_.get());
   Segments segments;
 
   const ConversionRequest convreq =
@@ -4041,38 +4046,6 @@ TEST_F(UserHistoryPredictorTest, JoinedSegmentsTestDesktop) {
   segments.Clear();
 }
 
-TEST_F(UserHistoryPredictorTest, UsageStats) {
-  UserHistoryPredictor *predictor = GetUserHistoryPredictorWithClearedHistory();
-
-  Segments segments;
-  EXPECT_COUNT_STATS("CommitUserHistoryPredictor", 0);
-  EXPECT_COUNT_STATS("CommitUserHistoryPredictorZeroQuery", 0);
-
-  const ConversionRequest convreq1 =
-      SetUpInputForConversion("なまえは", &composer_, &segments);
-  AddCandidate(0, "名前は", &segments);
-  segments.mutable_conversion_segment(0)->mutable_candidate(0)->source_info |=
-      Segment::Candidate::USER_HISTORY_PREDICTOR;
-  predictor->Finish(convreq1, &segments);
-
-  EXPECT_COUNT_STATS("CommitUserHistoryPredictor", 1);
-  EXPECT_COUNT_STATS("CommitUserHistoryPredictorZeroQuery", 0);
-
-  segments.Clear();
-
-  // Zero query
-  const ConversionRequest convreq2 =
-      SetUpInputForConversion("", &composer_, &segments);
-  AddCandidate(0, "名前は", &segments);
-  segments.mutable_conversion_segment(0)->mutable_candidate(0)->source_info |=
-      Segment::Candidate::USER_HISTORY_PREDICTOR;
-  predictor->Finish(convreq2, &segments);
-
-  // UserHistoryPredictor && ZeroQuery
-  EXPECT_COUNT_STATS("CommitUserHistoryPredictor", 2);
-  EXPECT_COUNT_STATS("CommitUserHistoryPredictorZeroQuery", 1);
-}
-
 TEST_F(UserHistoryPredictorTest, PunctuationLinkMobile) {
   UserHistoryPredictor *predictor = GetUserHistoryPredictorWithClearedHistory();
   request_test_util::FillMobileRequest(&request_);
@@ -4606,7 +4579,19 @@ TEST_F(UserHistoryPredictorTest, MaxPredictionCandidatesSizeForZeroQuery) {
 }
 
 TEST_F(UserHistoryPredictorTest, TypingCorrection) {
-  UserHistoryPredictor *predictor = GetUserHistoryPredictorWithClearedHistory();
+  auto mock = std::make_unique<engine::MockSupplementalModel>();
+  // TODO(taku): Avoid sharing the pointer of std::unique_ptr.
+  engine::MockSupplementalModel *mock_ptr = mock.get();
+
+  std::unique_ptr<engine::Modules> modules =
+      engine::ModulesPresetBuilder()
+          .PresetDictionary(std::make_unique<MockDictionary>())
+          .PresetSupplementalModel(std::move(mock))
+          .Build(std::make_unique<testing::MockDataManager>())
+          .value();
+  auto predictor = std::make_unique<UserHistoryPredictor>(*modules, false);
+  predictor->WaitForSyncer();
+
   ScopedClockMock clock(absl::FromUnixSeconds(1));
 
   Segments segments;
@@ -4655,9 +4640,8 @@ TEST_F(UserHistoryPredictorTest, TypingCorrection) {
   // かつこ -> がっこ and かっこ
   add_expected("がっこ");
   add_expected("かっこ");
-  engine::MockSupplementalModel mock;
-  EXPECT_CALL(mock, CorrectComposition(_, _)).WillRepeatedly(Return(expected));
-  SetSupplementalModel(&mock);
+  EXPECT_CALL(*mock_ptr, CorrectComposition(_))
+      .WillRepeatedly(Return(expected));
 
   // set_typing_correction_apply_user_history_size=0
   request_.mutable_decoder_experiment_params()
@@ -4689,7 +4673,7 @@ TEST_F(UserHistoryPredictorTest, TypingCorrection) {
   EXPECT_EQ(segments.segment(0).candidate(1).value, "ガッコウ");
   EXPECT_EQ(segments.segment(0).candidate(2).value, "学校");
 
-  SetSupplementalModel(nullptr);
+  ::testing::Mock::VerifyAndClearExpectations(mock_ptr);
   const ConversionRequest convreq6 =
       SetUpInputForSuggestion("かつこ", &composer_, &segments);
   EXPECT_FALSE(predictor->PredictForRequest(convreq6, &segments));

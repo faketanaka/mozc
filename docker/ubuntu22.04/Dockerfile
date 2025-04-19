@@ -27,8 +27,10 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-# Build instructions with this Dockerfile.
-# https://github.com/google/mozc/blob/master/docs/build_mozc_in_docker.md
+# This file is deprecated.
+# See the following pages for the latest build instructions.
+# - https://github.com/google/mozc/blob/master/docs/build_mozc_for_linux.md
+# - https://github.com/google/mozc/blob/master/docs/build_mozc_for_android.md
 
 FROM ubuntu:22.04
 
@@ -60,11 +62,6 @@ ENV PKG_CONFIG_PATH="/home/mozc_builder/work/mozc/docker/ubuntu22.04/qt6-core-pk
 RUN curl -LO https://github.com/bazelbuild/bazelisk/releases/download/v1.25.0/bazelisk-linux-amd64 \
   && mv bazelisk-linux-amd64 /home/mozc_builder/bin/bazelisk \
   && chmod u+x /home/mozc_builder/bin/bazelisk
-
-## Set up Android NDK
-## https://github.com/android/ndk/wiki/Home/90998c4e6080643138a764cb4aa7261261ed766b#ndk-r27b-2024-lts
-RUN curl -LO https://dl.google.com/android/repository/android-ndk-r27b-linux.zip && unzip android-ndk-r27b-linux.zip && rm android-ndk-r27b-linux.zip
-ENV ANDROID_NDK_HOME /home/mozc_builder/work/android-ndk-r27b
 
 # check out Mozc source with submodules
 RUN mkdir /home/mozc_builder/work/mozc

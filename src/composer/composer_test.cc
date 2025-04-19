@@ -107,26 +107,21 @@ class ComposerTest : public ::testing::Test {
   ~ComposerTest() override = default;
 
   void SetUp() override {
-    table_ = std::make_unique<Table>();
-    config_ = std::make_unique<Config>();
-    request_ = std::make_unique<Request>();
-    composer_ =
-        std::make_unique<Composer>(table_.get(), request_.get(), config_.get());
+    table_ = std::make_shared<Table>();
+    config_ = std::make_shared<Config>();
+    request_ = std::make_shared<Request>();
+    composer_ = std::make_unique<Composer>(table_, request_, config_);
     CharacterFormManager::GetCharacterFormManager()->SetDefaultRule();
   }
 
   void TearDown() override {
     CharacterFormManager::GetCharacterFormManager()->SetDefaultRule();
-    composer_.reset();
-    request_.reset();
-    config_.reset();
-    table_.reset();
   }
 
   std::unique_ptr<Composer> composer_;
-  std::unique_ptr<Table> table_;
-  std::unique_ptr<Request> request_;
-  std::unique_ptr<Config> config_;
+  std::shared_ptr<Table> table_;
+  std::shared_ptr<Request> request_;
+  std::shared_ptr<Config> config_;
 };
 
 TEST_F(ComposerTest, Reset) {
@@ -552,7 +547,7 @@ TEST_F(ComposerTest, Issue277163340) {
   // Test against http://b/277163340.
   // Before the fix, unexpected input was passed to
   // RemoveExpandedCharsForModifier() in the following test due to another
-  // bug in composer/internal/char_chunk.cc and it
+  // bug in composer/char_chunk.cc and it
   // caused the process to crash.
   table_->AddRuleWithAttributes("[", "", "", NO_TRANSLITERATION);
   commands::KeyEvent key;
@@ -855,8 +850,7 @@ TEST_F(ComposerTest, InsertCharacterKeyEventWithInputMode) {
     EXPECT_EQ(composer_->GetInputMode(), transliteration::HIRAGANA);
   }
 
-  composer_ =
-      std::make_unique<Composer>(table_.get(), request_.get(), config_.get());
+  composer_ = std::make_unique<Composer>(table_, request_, config_);
 
   {
     // "a" → "あ" (Hiragana)
@@ -1258,8 +1252,7 @@ TEST_F(ComposerTest, AutoIMETurnOffEnabled) {
     EXPECT_EQ(composer_->GetInputMode(), transliteration::HIRAGANA);
   }
 
-  composer_ =
-      std::make_unique<Composer>(table_.get(), request_.get(), config_.get());
+  composer_ = std::make_unique<Composer>(table_, request_, config_);
 
   {  // google
     InsertKey("g", composer_.get());
@@ -1324,8 +1317,7 @@ TEST_F(ComposerTest, AutoIMETurnOffEnabled) {
   }
 
   config_->set_shift_key_mode_switch(Config::OFF);
-  composer_ =
-      std::make_unique<Composer>(table_.get(), request_.get(), config_.get());
+  composer_ = std::make_unique<Composer>(table_, request_, config_);
 
   {  // Google
     InsertKey("G", composer_.get());
@@ -1555,9 +1547,9 @@ TEST_F(ComposerTest, UpdateInputMode) {
 
 TEST_F(ComposerTest, DisabledUpdateInputMode) {
   // Set the flag disable.
-  commands::Request request;
-  request.set_update_input_mode_from_surrounding_text(false);
-  composer_->SetRequest(&request);
+  auto request = std::make_shared<commands::Request>();
+  request->set_update_input_mode_from_surrounding_text(false);
+  composer_->SetRequest(request);
 
   table_->AddRule("a", "あ", "");
   table_->AddRule("i", "い", "");
@@ -2510,14 +2502,14 @@ TEST_F(ComposerTest, DeleteRange) {
 
 TEST_F(ComposerTest, 12KeysAsciiGetQueryForPrediction) {
   // http://b/5509480
-  commands::Request request;
-  request.set_zero_query_suggestion(true);
-  request.set_mixed_conversion(true);
-  request.set_special_romanji_table(
+  auto request = std::make_shared<commands::Request>();
+  request->set_zero_query_suggestion(true);
+  request->set_mixed_conversion(true);
+  request->set_special_romanji_table(
       commands::Request::TWELVE_KEYS_TO_HALFWIDTHASCII);
-  composer_->SetRequest(&request);
+  composer_->SetRequest(request);
   table_->InitializeWithRequestAndConfig(
-      request, config::ConfigHandler::DefaultConfig());
+      *request, config::ConfigHandler::DefaultConfig());
   composer_->InsertCharacter("2");
   EXPECT_EQ(composer_->GetStringForPreedit(), "a");
   EXPECT_EQ(composer_->GetQueryForConversion(), "a");
@@ -2945,7 +2937,8 @@ TEST_F(ComposerTest, NBforeN_WithFullWidth) {
   EXPECT_EQ(right, "");
 
   // auto = std::pair<std::string, absl::btree_set<std::string>>
-  const auto [queries_base, queries_expanded] = composer_->GetQueriesForPrediction();
+  const auto [queries_base, queries_expanded] =
+      composer_->GetQueriesForPrediction();
   EXPECT_EQ(queries_base, "あn");
 
   EXPECT_EQ(composer_->GetQueryForPrediction(), "あnn");
@@ -3224,7 +3217,7 @@ TEST_F(ComposerTest, CreateComposerOperators) {
 }
 
 TEST_F(ComposerTest, CreateEmptyComposerData) {
-  const ComposerData data = Composer::CreateEmptyComposerData();
+  const ComposerData &data = Composer::EmptyComposerData();
   EXPECT_EQ(data.GetInputMode(), transliteration::HIRAGANA);
   EXPECT_EQ(data.GetStringForPreedit(), "");
   EXPECT_EQ(data.GetQueryForConversion(), "");

@@ -37,6 +37,7 @@
 #include <utility>
 #include <vector>
 
+#include "absl/base/no_destructor.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -65,10 +66,6 @@
 #include "protocol/config.pb.h"
 #include "request/request_test_util.h"
 #include "session/session_handler.h"
-#include "session/session_handler_interface.h"
-#include "session/session_usage_observer.h"
-#include "storage/registry.h"
-#include "usage_stats/usage_stats.h"
 
 namespace mozc {
 namespace session {
@@ -100,10 +97,7 @@ std::string ToTextFormat(const Message &proto) {
 SessionHandlerTool::SessionHandlerTool(std::unique_ptr<EngineInterface> engine)
     : id_(0),
       engine_(engine.get()),
-      usage_observer_(std::make_unique<SessionUsageObserver>()),
-      handler_(std::make_unique<SessionHandler>(std::move(engine))) {
-  handler_->AddObserver(usage_observer_.get());
-}
+      handler_(std::make_unique<SessionHandler>(std::move(engine))) {}
 
 bool SessionHandlerTool::CreateSession() {
   Command command;
@@ -271,7 +265,7 @@ void SessionHandlerTool::SetCallbackText(const absl::string_view text) {
 bool SessionHandlerTool::ReloadSupplementalModel(absl::string_view model_path) {
   commands::Input input;
   input.mutable_engine_reload_request()->set_file_path(model_path);
-  input.set_type(commands::Input::RELOAD_SPELL_CHECKER);
+  input.set_type(commands::Input::RELOAD_SUPPLEMENTAL_MODEL);
   commands::Output output;
   return EvalCommand(&input, &output);
 }
@@ -313,11 +307,9 @@ SessionHandlerInterpreter::SessionHandlerInterpreter()
 SessionHandlerInterpreter::SessionHandlerInterpreter(
     std::unique_ptr<EngineInterface> engine) {
   client_ = std::make_unique<SessionHandlerTool>(std::move(engine));
-  config_ = std::make_unique<Config>();
   last_output_ = std::make_unique<Output>();
   request_ = std::make_unique<Request>();
-
-  ConfigHandler::GetConfig(config_.get());
+  config_ = ConfigHandler::GetCopiedConfig();
 
   // Set up session.
   CHECK(client_->CreateSession()) << "Client initialization is failed.";
@@ -331,8 +323,7 @@ SessionHandlerInterpreter::~SessionHandlerInterpreter() {
 }
 
 void SessionHandlerInterpreter::ClearState() {
-  Config config;
-  ConfigHandler::GetDefaultConfig(&config);
+  const Config &config = ConfigHandler::DefaultConfig();
   ConfigHandler::SetConfig(config);
 
   // CharacterFormManager is not automatically updated when the config is
@@ -341,7 +332,6 @@ void SessionHandlerInterpreter::ClearState() {
 
   // Some destructors may save the state on storages. To clear the state, we
   // explicitly call destructors before clearing storages.
-  storage::Registry::Clear();
   FileUtil::UnlinkOrLogError(
       ConfigFileStream::GetFileName("user://boundary.db"));
   FileUtil::UnlinkOrLogError(
@@ -353,7 +343,6 @@ void SessionHandlerInterpreter::ClearState() {
 void SessionHandlerInterpreter::ClearAll() {
   ResetContext();
   ClearUserPrediction();
-  ClearUsageStats();
 }
 
 void SessionHandlerInterpreter::ResetContext() {
@@ -369,10 +358,6 @@ void SessionHandlerInterpreter::ClearUserPrediction() {
   CHECK(client_->ClearUserPrediction());
   CHECK(client_->ClearUserHistory());
   SyncDataToStorage();
-}
-
-void SessionHandlerInterpreter::ClearUsageStats() {
-  usage_stats::UsageStats::ClearAllStatsForTest();
 }
 
 const Output &SessionHandlerInterpreter::LastOutput() const {
@@ -397,7 +382,7 @@ const CandidateWord &SessionHandlerInterpreter::GetCandidateByValue(
     }
   }
 
-  static CandidateWord *fallback_candidate = new CandidateWord;
+  static absl::NoDestructor<CandidateWord> fallback_candidate;
   return *fallback_candidate;
 }
 
@@ -719,8 +704,8 @@ absl::Status SessionHandlerInterpreter::Eval(
     MOZC_ASSERT_TRUE(args.size() >= 3);
     MOZC_ASSERT_TRUE(SetOrAddFieldValueFromString(
         std::vector<std::string>(args.begin() + 1, args.end() - 1),
-        *(args.end() - 1), config_.get()));
-    MOZC_ASSERT_TRUE(client_->SetConfig(*config_, last_output_.get()));
+        *(args.end() - 1), &config_));
+    MOZC_ASSERT_TRUE(client_->SetConfig(config_, last_output_.get()));
   } else if (command == "MERGE_DECODER_EXPERIMENT_PARAMS") {
     MOZC_ASSERT_EQ(2, args.size());
     if (const std::string &textproto = args[1]; !textproto.empty()) {
@@ -754,9 +739,6 @@ absl::Status SessionHandlerInterpreter::Eval(
   } else if (command == "CLEAR_USER_PREDICTION") {
     MOZC_ASSERT_EQ(1, args.size());
     ClearUserPrediction();
-  } else if (command == "CLEAR_USAGE_STATS") {
-    MOZC_ASSERT_EQ(1, args.size());
-    ClearUsageStats();
   } else if (command == "EXPECT_CONSUMED") {
     MOZC_ASSERT_EQ(args.size(), 2);
     MOZC_ASSERT_TRUE(last_output_->has_consumed());
@@ -864,32 +846,6 @@ absl::Status SessionHandlerInterpreter::Eval(
       }
     }
     MOZC_ASSERT_EQ(index, NumberUtil::SimpleAtoi(args[1]));
-  } else if (command == "EXPECT_USAGE_STATS_COUNT") {
-    MOZC_ASSERT_EQ(args.size(), 3);
-    const uint32_t expected_value = NumberUtil::SimpleAtoi(args[2]);
-    if (expected_value == 0) {
-      MOZC_EXPECT_STATS_NOT_EXIST(args[1]);
-    } else {
-      MOZC_EXPECT_COUNT_STATS(args[1], expected_value);
-    }
-  } else if (command == "EXPECT_USAGE_STATS_INTEGER") {
-    MOZC_ASSERT_EQ(args.size(), 3);
-    MOZC_EXPECT_INTEGER_STATS(args[1], NumberUtil::SimpleAtoi(args[2]));
-  } else if (command == "EXPECT_USAGE_STATS_BOOLEAN") {
-    MOZC_ASSERT_EQ(args.size(), 3);
-    MOZC_EXPECT_BOOLEAN_STATS(args[1], args[2] == "true");
-  } else if (command == "EXPECT_USAGE_STATS_TIMING") {
-    MOZC_ASSERT_EQ(args.size(), 6);
-    const uint32_t expected_num = NumberUtil::SimpleAtoi(args[3]);
-    if (expected_num == 0) {
-      MOZC_EXPECT_STATS_NOT_EXIST(args[1]);
-    } else {
-      const uint64_t expected_total = NumberUtil::SimpleAtoi(args[2]);
-      const uint32_t expected_min = NumberUtil::SimpleAtoi(args[4]);
-      const uint32_t expected_max = NumberUtil::SimpleAtoi(args[5]);
-      MOZC_EXPECT_TIMING_STATS(args[1], expected_total, expected_num,
-                               expected_min, expected_max);
-    }
   } else {
     return absl::Status(absl::StatusCode::kUnimplemented, "");
   }

@@ -47,7 +47,6 @@
 #include "base/file/temp_dir.h"
 #include "base/file_util.h"
 #include "base/random.h"
-#include "base/singleton.h"
 #include "config/config_handler.h"
 #include "data_manager/testing/mock_data_manager.h"
 #include "dictionary/dictionary_interface.h"
@@ -55,18 +54,14 @@
 #include "dictionary/dictionary_test_util.h"
 #include "dictionary/dictionary_token.h"
 #include "dictionary/pos_matcher.h"
-#include "dictionary/suppression_dictionary.h"
 #include "dictionary/user_dictionary_storage.h"
 #include "dictionary/user_pos.h"
-#include "dictionary/user_pos_interface.h"
 #include "protocol/config.pb.h"
 #include "protocol/user_dictionary_storage.pb.h"
 #include "request/conversion_request.h"
 #include "testing/gmock.h"
 #include "testing/gunit.h"
 #include "testing/mozctest.h"
-#include "usage_stats/usage_stats.h"
-#include "usage_stats/usage_stats_testing_util.h"
 
 namespace mozc {
 namespace dictionary {
@@ -135,10 +130,8 @@ void PushBackToken(absl::string_view key, absl::string_view value, uint16_t id,
 // depends on POS. It accepts only two values for part-of-speech:
 // "noun" as words without inflection and "verb" as words with
 // inflection.
-class UserPosMock : public UserPosInterface {
+class UserPosMock : public UserPos {
  public:
-  UserPosMock() = default;
-
   // This method returns true if the given pos is "noun" or "verb".
   bool IsValidPos(absl::string_view pos) const override { return true; }
 
@@ -192,15 +185,9 @@ class UserPosMock : public UserPosInterface {
 
 class UserDictionaryTest : public testing::TestWithTempUserProfile {
  protected:
-  UserDictionaryTest()
-      : suppression_dictionary_(std::make_unique<SuppressionDictionary>()) {
-    mozc::usage_stats::UsageStats::ClearAllStatsForTest();
-    config::ConfigHandler::GetDefaultConfig(&config_);
-  }
+  UserDictionaryTest() { config::ConfigHandler::GetDefaultConfig(&config_); }
 
   ~UserDictionaryTest() override {
-    mozc::usage_stats::UsageStats::ClearAllStatsForTest();
-
     // This config initialization will be removed once ConversionRequest can
     // take config as an injected argument.
     config::Config config;
@@ -213,16 +200,22 @@ class UserDictionaryTest : public testing::TestWithTempUserProfile {
   std::unique_ptr<UserDictionary> CreateDictionaryWithMockPos() {
     return std::make_unique<UserDictionary>(
         std::make_unique<UserPosMock>(),
-        dictionary::PosMatcher(mock_data_manager_.GetPosMatcherData()),
-        suppression_dictionary_.get());
+        dictionary::PosMatcher(mock_data_manager_.GetPosMatcherData()));
   }
 
   // Creates a user dictionary with actual pos data.
   std::unique_ptr<UserDictionary> CreateDictionary() {
     return std::make_unique<UserDictionary>(
         UserPos::CreateFromDataManager(mock_data_manager_),
+        dictionary::PosMatcher(mock_data_manager_.GetPosMatcherData()));
+  }
+
+  std::unique_ptr<UserDictionary> CreateDictionaryWithFilename(
+      std::string filename) {
+    return std::make_unique<UserDictionary>(
+        UserPos::CreateFromDataManager(mock_data_manager_),
         dictionary::PosMatcher(mock_data_manager_.GetPosMatcherData()),
-        Singleton<SuppressionDictionary>::get());
+        std::move(filename));
   }
 
   ConversionRequest ConvReq(const config::Config &config) {
@@ -334,12 +327,10 @@ class UserDictionaryTest : public testing::TestWithTempUserProfile {
     return comment;
   }
 
-  std::unique_ptr<SuppressionDictionary> suppression_dictionary_;
   config::Config config_;
 
  private:
   const testing::MockDataManager mock_data_manager_;
-  usage_stats::scoped_usage_stats_enabler usage_stats_enabler_;
 };
 
 TEST_F(UserDictionaryTest, TestLookupPredictiveCallback) {
@@ -597,8 +588,7 @@ TEST_F(UserDictionaryTest, TestLookupExactWithSuggestionOnlyWords) {
       FileUtil::JoinPath(temp_dir.path(), "suggestion_only_test.db");
   UserDictionaryStorage storage(filename);
   {
-    uint64_t id = 0;
-    EXPECT_TRUE(storage.CreateDictionary("test", &id));
+    EXPECT_OK(storage.CreateDictionary("test"));
     UserDictionaryStorage::UserDictionary *dic =
         storage.GetProto().mutable_dictionaries(0);
 
@@ -636,10 +626,9 @@ TEST_F(UserDictionaryTest, TestLookupWithShortCut) {
       FileUtil::JoinPath(temp_dir.path(), "shortcut_test.db");
   UserDictionaryStorage storage(filename);
   {
-    uint64_t id = 0;
     // Creates the shortcut dictionary (from Gboard Android).
-    EXPECT_TRUE(storage.CreateDictionary(
-        "__auto_imported_android_shortcuts_dictionary", &id));
+    EXPECT_OK(storage.CreateDictionary(
+        "__auto_imported_android_shortcuts_dictionary"));
     UserDictionaryStorage::UserDictionary *dic =
         storage.GetProto().mutable_dictionaries(0);
 
@@ -699,8 +688,7 @@ TEST_F(UserDictionaryTest, TestKeyNormalization) {
       FileUtil::JoinPath(temp_dir.path(), "normalization_test.db");
   UserDictionaryStorage storage(filename);
   {
-    uint64_t id = 0;
-    EXPECT_TRUE(storage.CreateDictionary("normalization_test", &id));
+    EXPECT_OK(storage.CreateDictionary("normalization_test"));
     UserDictionaryStorage::UserDictionary *dic =
         storage.GetProto().mutable_dictionaries(0);
 
@@ -782,8 +770,7 @@ TEST_F(UserDictionaryTest, AsyncLoadTest) {
     EXPECT_FALSE(storage.Load().ok());
     EXPECT_TRUE(storage.Lock());
 
-    uint64_t id = 0;
-    EXPECT_TRUE(storage.CreateDictionary("test", &id));
+    EXPECT_OK(storage.CreateDictionary("test"));
     UserDictionaryStorage::UserDictionary *dic =
         storage.GetProto().mutable_dictionaries(0);
     for (size_t j = 0; j < 10000; ++j) {
@@ -799,10 +786,9 @@ TEST_F(UserDictionaryTest, AsyncLoadTest) {
   }
 
   {
-    std::unique_ptr<UserDictionary> dic(CreateDictionary());
+    std::unique_ptr<UserDictionary> dic(CreateDictionaryWithFilename(filename));
     // Wait for async reload called from the constructor.
     dic->WaitForReloader();
-    dic->SetUserDictionaryName(filename);
 
     for (int i = 0; i < 32; ++i) {
       std::shuffle(keys.begin(), keys.end(), random);
@@ -811,6 +797,7 @@ TEST_F(UserDictionaryTest, AsyncLoadTest) {
         CollectTokenCallback callback;
         const ConversionRequest convreq = ConvReq(config_);
         dic->LookupPrefix(keys[i], convreq, &callback);
+        EXPECT_FALSE(callback.tokens().empty());
       }
     }
     dic->WaitForReloader();
@@ -818,8 +805,7 @@ TEST_F(UserDictionaryTest, AsyncLoadTest) {
 
   // Fix b//341758719. Waits the reload inside the destructor.
   {
-    std::unique_ptr<UserDictionary> dic(CreateDictionary());
-    dic->SetUserDictionaryName(filename);
+    std::unique_ptr<UserDictionary> dic(CreateDictionaryWithFilename(filename));
     dic->Reload();
   }
 }
@@ -836,8 +822,7 @@ TEST_F(UserDictionaryTest, TestSuppressionDictionary) {
 
   // Create dictionary
   {
-    uint64_t id = 0;
-    EXPECT_TRUE(storage.CreateDictionary("test", &id));
+    EXPECT_OK(storage.CreateDictionary("test"));
     UserDictionaryStorage::UserDictionary *dic =
         storage.GetProto().mutable_dictionaries(0);
     for (size_t j = 0; j < 10000; ++j) {
@@ -858,7 +843,7 @@ TEST_F(UserDictionaryTest, TestSuppressionDictionary) {
     user_dic->Load(storage.GetProto());
 
     for (size_t j = 0; j < 10; ++j) {
-      EXPECT_TRUE(suppression_dictionary_->SuppressEntry(
+      EXPECT_TRUE(user_dic->IsSuppressedEntry(
           absl::StrCat("suppress_key", j), absl::StrCat("suppress_value", j)));
     }
   }
@@ -866,8 +851,7 @@ TEST_F(UserDictionaryTest, TestSuppressionDictionary) {
   // Remove suppression entry
   {
     storage.GetProto().Clear();
-    uint64_t id = 0;
-    EXPECT_TRUE(storage.CreateDictionary("test", &id));
+    EXPECT_OK(storage.CreateDictionary("test"));
     UserDictionaryStorage::UserDictionary *dic =
         storage.GetProto().mutable_dictionaries(0);
     for (size_t j = 0; j < 10000; ++j) {
@@ -880,7 +864,7 @@ TEST_F(UserDictionaryTest, TestSuppressionDictionary) {
     user_dic->Load(storage.GetProto());
 
     for (size_t j = 0; j < 10; ++j) {
-      EXPECT_FALSE(suppression_dictionary_->SuppressEntry(
+      EXPECT_FALSE(user_dic->IsSuppressedEntry(
           absl::StrCat("suppress_key", j), absl::StrCat("suppress_value", j)));
     }
   }
@@ -898,8 +882,7 @@ TEST_F(UserDictionaryTest, TestSuggestionOnlyWord) {
 
   // Create dictionary
   {
-    uint64_t id = 0;
-    EXPECT_TRUE(storage.CreateDictionary("test", &id));
+    EXPECT_OK(storage.CreateDictionary("test"));
     UserDictionaryStorage::UserDictionary *dic =
         storage.GetProto().mutable_dictionaries(0);
 
@@ -938,54 +921,6 @@ TEST_F(UserDictionaryTest, TestSuggestionOnlyWord) {
         callback.tokens(),
         Each(Field(&Token::value, AnyOf(Eq("suggest_only"), Eq("default")))));
   }
-}
-
-TEST_F(UserDictionaryTest, TestUsageStats) {
-  std::unique_ptr<UserDictionary> dic(CreateDictionaryWithMockPos());
-  // Wait for async reload called from the constructor.
-  dic->WaitForReloader();
-  UserDictionaryStorage storage("");
-
-  {
-    UserDictionaryStorage::UserDictionary *dic1 =
-        storage.GetProto().add_dictionaries();
-    CHECK(dic1);
-    UserDictionaryStorage::UserDictionaryEntry *entry;
-    entry = dic1->add_entries();
-    CHECK(entry);
-    entry->set_key("key1");
-    entry->set_value("value1");
-    entry->set_pos(user_dictionary::UserDictionary::NOUN);
-    entry = dic1->add_entries();
-    CHECK(entry);
-    entry->set_key("key2");
-    entry->set_value("value2");
-    entry->set_pos(user_dictionary::UserDictionary::NOUN);
-  }
-  {
-    UserDictionaryStorage::UserDictionary *dic2 =
-        storage.GetProto().add_dictionaries();
-    CHECK(dic2);
-    UserDictionaryStorage::UserDictionaryEntry *entry;
-    entry = dic2->add_entries();
-    CHECK(entry);
-    entry->set_key("key3");
-    entry->set_value("value3");
-    entry->set_pos(user_dictionary::UserDictionary::NOUN);
-    entry = dic2->add_entries();
-    CHECK(entry);
-    entry->set_key("key4");
-    entry->set_value("value4");
-    entry->set_pos(user_dictionary::UserDictionary::NOUN);
-    entry = dic2->add_entries();
-    CHECK(entry);
-    entry->set_key("key5");
-    entry->set_value("value5");
-    entry->set_pos(user_dictionary::UserDictionary::NOUN);
-  }
-  dic->Load(storage.GetProto());
-
-  EXPECT_INTEGER_STATS("UserRegisteredWord", 5);
 }
 
 TEST_F(UserDictionaryTest, LookupComment) {
@@ -1045,7 +980,7 @@ TEST_F(UserDictionaryTest, TestPopulateTokenFromUserPosToken) {
   const dictionary::PosMatcher pos_matcher(
       mock_data_manager.GetPosMatcherData());
 
-  UserPosInterface::Token user_token{.key = "key", .value = "value", .id = 10};
+  UserPos::Token user_token{.key = "key", .value = "value", .id = 10};
 
   Token token;
 

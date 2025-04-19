@@ -86,21 +86,23 @@ class SingleKanjiPredictionAggregatorTest : public ::testing::Test {
     request_test_util::FillMobileRequest(request_.get());
     config_ = std::make_unique<config::Config>();
     config::ConfigHandler::GetDefaultConfig(config_.get());
-    table_ = std::make_unique<composer::Table>();
     composer_ = std::make_unique<composer::Composer>(
-        table_.get(), request_.get(), config_.get());
+        composer::Table::GetSharedDefaultTable(), *request_, *config_);
   }
 
   ConversionRequest CreateConversionRequest() const {
     ConversionRequest::Options options = {
         .request_type = ConversionRequest::PREDICTION,
     };
-    return ConversionRequest(*composer_, *request_, context_, *config_,
-                             std::move(options));
+    return ConversionRequestBuilder()
+        .SetComposer(*composer_)
+        .SetRequestView(*request_)
+        .SetConfigView(*config_)
+        .SetOptions(std::move(options))
+        .Build();
   }
 
   std::unique_ptr<composer::Composer> composer_;
-  std::unique_ptr<composer::Table> table_;
   std::unique_ptr<config::Config> config_;
   std::unique_ptr<commands::Request> request_;
   commands::Context context_;

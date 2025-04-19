@@ -37,7 +37,6 @@
 #include <memory>
 #include <string>
 
-#include "absl/base/attributes.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "converter/converter_interface.h"
@@ -45,8 +44,8 @@
 #include "converter/immutable_converter_interface.h"
 #include "converter/reverse_converter.h"
 #include "converter/segments.h"
+#include "dictionary/dictionary_interface.h"
 #include "dictionary/pos_matcher.h"
-#include "dictionary/suppression_dictionary.h"
 #include "engine/modules.h"
 #include "prediction/predictor_interface.h"
 #include "request/conversion_request.h"
@@ -63,8 +62,8 @@ class Converter final : public ConverterInterface {
 
   using PredictorFactory =
       std::function<std::unique_ptr<prediction::PredictorInterface>(
-          const engine::Modules &modules, const ConverterInterface *converter,
-          const ImmutableConverterInterface *immutable_converter)>;
+          const engine::Modules &modules, const ConverterInterface &converter,
+          const ImmutableConverterInterface &immutable_converter)>;
 
   using RewriterFactory = std::function<std::unique_ptr<RewriterInterface>(
       const engine::Modules &modules)>;
@@ -78,13 +77,13 @@ class Converter final : public ConverterInterface {
             const PredictorFactory &predictor_factory,
             const RewriterFactory &rewriter_factory);
 
-  ABSL_MUST_USE_RESULT
+  [[nodiscard]]
   bool StartConversion(const ConversionRequest &request,
                        Segments *segments) const override;
-  ABSL_MUST_USE_RESULT
+  [[nodiscard]]
   bool StartReverseConversion(Segments *segments,
                               absl::string_view key) const override;
-  ABSL_MUST_USE_RESULT
+  [[nodiscard]]
   bool StartPrediction(const ConversionRequest &request,
                        Segments *segments) const override;
 
@@ -94,34 +93,34 @@ class Converter final : public ConverterInterface {
   void ResetConversion(Segments *segments) const override;
   void RevertConversion(Segments *segments) const override;
 
-  ABSL_MUST_USE_RESULT
+  [[nodiscard]]
   bool DeleteCandidateFromHistory(const Segments &segments,
                                   size_t segment_index,
                                   int candidate_index) const override;
 
-  ABSL_MUST_USE_RESULT
+  [[nodiscard]]
   bool ReconstructHistory(Segments *segments,
                           absl::string_view preceding_text) const override;
 
-  ABSL_MUST_USE_RESULT
+  [[nodiscard]]
   bool CommitSegmentValue(Segments *segments, size_t segment_index,
                           int candidate_index) const override;
-  ABSL_MUST_USE_RESULT
+  [[nodiscard]]
   bool CommitPartialSuggestionSegmentValue(
       Segments *segments, size_t segment_index, int candidate_index,
       absl::string_view current_segment_key,
       absl::string_view new_segment_key) const override;
-  ABSL_MUST_USE_RESULT
+  [[nodiscard]]
   bool FocusSegmentValue(Segments *segments, size_t segment_index,
                          int candidate_index) const override;
-  ABSL_MUST_USE_RESULT
+  [[nodiscard]]
   bool CommitSegments(Segments *segments,
                       absl::Span<const size_t> candidate_index) const override;
-  ABSL_MUST_USE_RESULT bool ResizeSegment(Segments *segments,
-                                          const ConversionRequest &request,
-                                          size_t segment_index,
-                                          int offset_length) const override;
-  ABSL_MUST_USE_RESULT bool ResizeSegments(
+  [[nodiscard]] bool ResizeSegment(Segments *segments,
+                                   const ConversionRequest &request,
+                                   size_t segment_index,
+                                   int offset_length) const override;
+  [[nodiscard]] bool ResizeSegments(
       Segments *segments, const ConversionRequest &request,
       size_t start_segment_index,
       absl::Span<const uint8_t> new_size_array) const override;
@@ -140,17 +139,29 @@ class Converter final : public ConverterInterface {
   // Waits for pending operations executed in different threads.
   bool Wait();
 
-  prediction::PredictorInterface *predictor() const { return predictor_.get(); }
-
-  RewriterInterface *rewriter() const { return rewriter_.get(); }
-
-  const ImmutableConverterInterface *immutable_converter() const {
-    return immutable_converter_.get();
+  prediction::PredictorInterface &predictor() const {
+    DCHECK(predictor_);
+    return *predictor_;
   }
 
-  engine::Modules *modules() const { return modules_.get(); }
+  RewriterInterface &rewriter() const {
+    DCHECK(rewriter_);
+    return *rewriter_;
+  }
+
+  const ImmutableConverterInterface &immutable_converter() const {
+    DCHECK(immutable_converter_);
+    return *immutable_converter_;
+  }
+
+  engine::Modules &modules() const {
+    DCHECK(modules_);
+    return *modules_;
+  }
 
  private:
+  Converter() = default;
+
   FRIEND_TEST(ConverterTest, CompletePosIds);
   FRIEND_TEST(ConverterTest, DefaultPredictor);
   FRIEND_TEST(ConverterTest, MaybeSetConsumedKeySizeToSegment);
@@ -186,12 +197,6 @@ class Converter final : public ConverterInterface {
   void TrimCandidates(const ConversionRequest &request,
                       Segments *segments) const;
 
-  // Commits usage stats for committed text.
-  // |begin_segment_index| is a index of whole segments. (history and conversion
-  // segments)
-  void CommitUsageStats(const Segments *segments, size_t begin_segment_index,
-                        size_t segment_length) const;
-
   // Returns the substring of |str|. This substring consists of similar script
   // type and you can use it as preceding text for conversion.
   bool GetLastConnectivePart(absl::string_view preceding_text, std::string *key,
@@ -203,7 +208,7 @@ class Converter final : public ConverterInterface {
   std::unique_ptr<RewriterInterface> rewriter_;
 
   const dictionary::PosMatcher &pos_matcher_;
-  const dictionary::SuppressionDictionary &suppression_dictionary_;
+  const dictionary::UserDictionaryInterface &user_dictionary_;
   const converter::HistoryReconstructor history_reconstructor_;
   const converter::ReverseConverter reverse_converter_;
   const uint16_t general_noun_id_ = std::numeric_limits<uint16_t>::max();

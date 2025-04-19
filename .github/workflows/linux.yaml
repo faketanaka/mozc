@@ -1,5 +1,5 @@
 name: CI for Linux
-# https://github.com/google/mozc/blob/master/docs/build_mozc_in_docker.md
+# https://github.com/google/mozc/blob/master/docs/build_mozc_for_linux.md
 
 # Run on push.
 on: push
@@ -21,12 +21,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: 'recursive'
+          submodules: recursive
 
       - name: Setup
         run: |
           sudo apt-get update
-          sudo apt-get install -y libibus-1.0-dev qt6-base-dev libgl-dev
+          sudo apt-get install -y libibus-1.0-dev qt6-base-dev
           #
           # Unset the Android NDK setting to skip the unnecessary configuration.
           echo "ANDROID_NDK_HOME=" >> $GITHUB_ENV
@@ -52,12 +52,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: 'recursive'
+          submodules: recursive
 
       - name: Setup
         run: |
           sudo apt-get update
-          sudo apt-get install -y libibus-1.0-dev qt6-base-dev libgl-dev
+          sudo apt-get install -y libibus-1.0-dev qt6-base-dev
           #
           # Unset the Android NDK setting to skip the unnecessary configuration.
           echo "ANDROID_NDK_HOME=" >> $GITHUB_ENV

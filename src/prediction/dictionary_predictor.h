@@ -44,6 +44,7 @@
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "base/thread.h"
 #include "converter/connector.h"
 #include "converter/converter_interface.h"
 #include "converter/immutable_converter_interface.h"
@@ -80,8 +81,8 @@ class DictionaryPredictor : public PredictorInterface {
   // Initializes a predictor with given references to submodules. Note that
   // pointers are not owned by the class and to be deleted by the caller.
   DictionaryPredictor(const engine::Modules &modules,
-                      const ConverterInterface *converter,
-                      const ImmutableConverterInterface *immutable_converter);
+                      const ConverterInterface &converter,
+                      const ImmutableConverterInterface &immutable_converter);
 
   DictionaryPredictor(const DictionaryPredictor &) = delete;
   DictionaryPredictor &operator=(const DictionaryPredictor &) = delete;
@@ -91,7 +92,7 @@ class DictionaryPredictor : public PredictorInterface {
 
   void Finish(const ConversionRequest &request, Segments *segments) override;
 
-  const std::string &GetPredictorName() const override {
+  absl::string_view GetPredictorName() const override {
     return predictor_name_;
   }
 
@@ -100,6 +101,7 @@ class DictionaryPredictor : public PredictorInterface {
    public:
     ResultFilter(const ConversionRequest &request, const Segments &segments,
                  dictionary::PosMatcher pos_matcher,
+                 const Connector &connector ABSL_ATTRIBUTE_LIFETIME_BOUND,
                  const SuggestionFilter &suggestion_filter
                      ABSL_ATTRIBUTE_LIFETIME_BOUND);
     bool ShouldRemove(const Result &result, int added_num,
@@ -112,11 +114,14 @@ class DictionaryPredictor : public PredictorInterface {
     const std::string input_key_;
     const size_t input_key_len_;
     const dictionary::PosMatcher pos_matcher_;
+    const Connector &connector_;
     const SuggestionFilter &suggestion_filter_;
     const bool is_mixed_conversion_;
     const bool auto_partial_suggestion_;
     const bool include_exact_key_;
     const bool is_handwriting_;
+    const int suffix_nwp_transition_cost_threshold_;
+    const int history_rid_ = 0;
 
     std::string history_key_;
     std::string history_value_;
@@ -140,7 +145,7 @@ class DictionaryPredictor : public PredictorInterface {
       std::string predictor_name, const engine::Modules &modules,
       std::unique_ptr<const prediction::PredictionAggregatorInterface>
           aggregator,
-      const ImmutableConverterInterface *immutable_converter);
+      const ImmutableConverterInterface &immutable_converter);
 
   // It is better to pass the rvalue of `results` if the
   // caller doesn't use the results after calling this method.
@@ -249,8 +254,6 @@ class DictionaryPredictor : public PredictorInterface {
                                      bool is_suggestion,
                                      size_t total_candidates_size);
 
-  void MaybeRecordUsageStats(const Segment::Candidate &candidate) const;
-
   // Sets candidate description.
   void SetDescription(PredictionTypes types,
                       Segment::Candidate *candidate) const;
@@ -263,7 +266,7 @@ class DictionaryPredictor : public PredictorInterface {
   int CalculatePrefixPenalty(
       const ConversionRequest &request, absl::string_view input_key,
       const Result &result,
-      const ImmutableConverterInterface *immutable_converter,
+      const ImmutableConverterInterface &immutable_converter,
       absl::flat_hash_map<PrefixPenaltyKey, int> *cache) const;
 
   // Populates typing corrected results to `results`.
@@ -298,12 +301,12 @@ class DictionaryPredictor : public PredictorInterface {
   //          Decode(Decode(Decode("AB"), "C"), "D")) ...
   // These variables work as a cache of previous results to prevent recursive
   // and expensive functional calls.
-  mutable std::shared_ptr<Result> prev_top_result_;
+  mutable AtomicSharedPtr<Result> prev_top_result_;
   mutable std::atomic<int32_t> prev_top_key_length_ = 0;
 
-  const ImmutableConverterInterface *immutable_converter_;
+  const ImmutableConverterInterface &immutable_converter_;
   const Connector &connector_;
-  const Segmenter *segmenter_;
+  const Segmenter &segmenter_;
   const SuggestionFilter &suggestion_filter_;
   std::unique_ptr<const dictionary::SingleKanjiDictionary>
       single_kanji_dictionary_;

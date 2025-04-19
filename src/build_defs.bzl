@@ -205,12 +205,45 @@ register_extension_info(
     label_regex_for_dep = "{extension_name}",
 )
 
+def _append_if_absent(target_list, item):
+    """Append the given item only when it is absent in the target.
+
+    Args:
+      target_list: a String list to be checked.
+      item: a String item that is to be made sure to exist in the list.
+    Returns:
+      list: target_list itself or a new list, where the given item exists.
+    """
+    if item in target_list:
+        return target_list
+    return target_list + [item]
+
+def _remove_if_present(target_list, item):
+    """Remove the given item if exists.
+
+    Args:
+      target_list: a String list to be checked.
+      item: a String item that is to be made sure to not exist in the list.
+    Returns:
+      list: target_list itself or a new list, where the given item does not
+            exist.
+    """
+    return [x for x in target_list if x != item]
+
 def _win_executable_transition_impl(
-        settings,  # @unused
+        settings,
         attr):
-    features = ["generate_pdb_file"]
+    features = settings["//command_line_option:features"]
+
+    features = _append_if_absent(features, "generate_pdb_file")
+
     if attr.static_crt:
-        features.append("static_link_msvcrt")
+        features = _remove_if_present(features, "dynamic_link_msvcrt")
+        features = _append_if_absent(features, "static_link_msvcrt")
+    else:
+        features = _remove_if_present(features, "static_link_msvcrt")
+        features = _append_if_absent(features, "dynamic_link_msvcrt")
+
     return {
         "//command_line_option:features": features,
         "//command_line_option:platforms": [attr.platform],
@@ -218,7 +251,9 @@ def _win_executable_transition_impl(
 
 _win_executable_transition = transition(
     implementation = _win_executable_transition_impl,
-    inputs = [],
+    inputs = [
+        "//command_line_option:features",
+    ],
     outputs = [
         "//command_line_option:features",
         "//command_line_option:platforms",
@@ -463,9 +498,10 @@ def mozc_cc_win32_library(
         name = cc_binary_target_name,
         srcs = srcs,
         deps = deps,
-        features = ["-generate_pdb_file"],
         win_def_file = win_def_file,
         linkshared = 1,
+        # Workaround for https://github.com/google/mozc/issues/1224
+        linkopts = ["/DEBUG"],
         tags = tags,
         target_compatible_with = target_compatible_with,
         visibility = ["//visibility:private"],
@@ -589,7 +625,7 @@ def mozc_objc_library(
         deps = deps + [
             "//:macro",
         ],
-        copts = copts + ["-funsigned-char", "-std=c++17"],
+        copts = copts + ["-funsigned-char"],
         target_compatible_with = select({
             "@platforms//os:macos": [],
             "@platforms//os:ios": [],

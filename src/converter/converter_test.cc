@@ -62,12 +62,9 @@
 #include "dictionary/dictionary_mock.h"
 #include "dictionary/dictionary_token.h"
 #include "dictionary/pos_matcher.h"
-#include "dictionary/suppression_dictionary.h"
 #include "dictionary/user_dictionary.h"
-#include "dictionary/user_dictionary_stub.h"
 #include "dictionary/user_pos.h"
 #include "engine/engine.h"
-#include "engine/engine_interface.h"
 #include "engine/mock_data_engine_factory.h"
 #include "engine/modules.h"
 #include "prediction/dictionary_predictor.h"
@@ -86,8 +83,6 @@
 #include "testing/gunit.h"
 #include "testing/mozctest.h"
 #include "transliteration/transliteration.h"
-#include "usage_stats/usage_stats.h"
-#include "usage_stats/usage_stats_testing_util.h"
 
 namespace mozc {
 namespace {
@@ -96,18 +91,18 @@ using ::mozc::dictionary::DictionaryInterface;
 using ::mozc::dictionary::MockDictionary;
 using ::mozc::dictionary::MockUserDictionary;
 using ::mozc::dictionary::PosMatcher;
-using ::mozc::dictionary::SuppressionDictionary;
 using ::mozc::dictionary::Token;
-using ::mozc::dictionary::UserDictionaryStub;
+using ::mozc::dictionary::UserDictionary;
 using ::mozc::prediction::DefaultPredictor;
 using ::mozc::prediction::DictionaryPredictor;
 using ::mozc::prediction::MobilePredictor;
 using ::mozc::prediction::PredictorInterface;
 using ::mozc::prediction::UserHistoryPredictor;
-using ::mozc::usage_stats::UsageStats;
 using ::testing::_;
 using ::testing::AnyNumber;
 using ::testing::StrEq;
+
+using UserEntry = user_dictionary::UserDictionary::Entry;
 
 Segment &AddSegment(absl::string_view key, Segment::SegmentType type,
                     Segments &segments) {
@@ -142,7 +137,7 @@ class StubPredictor : public PredictorInterface {
     return true;
   }
 
-  const std::string &GetPredictorName() const override {
+  absl::string_view GetPredictorName() const override {
     return predictor_name_;
   }
 
@@ -225,7 +220,7 @@ class MockPredictor : public mozc::prediction::PredictorInterface {
   MOCK_METHOD(bool, PredictForRequest, (const ConversionRequest &, Segments *),
               (const, override));
   MOCK_METHOD(void, Revert, (Segments *), (override));
-  MOCK_METHOD(const std::string &, GetPredictorName, (), (const, override));
+  MOCK_METHOD(absl::string_view, GetPredictorName, (), (const, override));
 };
 
 class MockRewriter : public RewriterInterface {
@@ -255,25 +250,21 @@ class ConverterTest : public testing::TestWithTempUserProfile {
         : key(k), value(v), pos(p) {}
   };
 
-  void SetUp() override { UsageStats::ClearAllStatsForTest(); }
-
-  void TearDown() override { UsageStats::ClearAllStatsForTest(); }
-
   // Returns initialized predictor for the given type.
   // |converter| will be initialized using predictor pointer, but predictor need
   // the pointer for |converter| for initializing. Prease see
   // mozc/engine/engine.cc for details. Caller should manage the ownership.
   std::unique_ptr<PredictorInterface> CreatePredictor(
       const engine::Modules &modules, PredictorType predictor_type,
-      const ConverterInterface *converter,
-      const ImmutableConverterInterface *immutable_converter) {
+      const ConverterInterface &converter,
+      const ImmutableConverterInterface &immutable_converter) {
     if (predictor_type == STUB_PREDICTOR) {
       return std::make_unique<StubPredictor>();
     }
 
     std::function<std::unique_ptr<PredictorInterface>(
         std::unique_ptr<PredictorInterface>,
-        std::unique_ptr<PredictorInterface>, const ConverterInterface *)>
+        std::unique_ptr<PredictorInterface>, const ConverterInterface &)>
         predictor_factory = nullptr;
     bool enable_content_word_learning = false;
 
@@ -310,8 +301,7 @@ class ConverterTest : public testing::TestWithTempUserProfile {
     return ret_predictor;
   }
 
-  // Initializes Converter with mock data set using given
-  // |user_dictionary| and |suppression_dictionary|.
+  // Initializes Converter with mock data set using given |user_dictionary|.
   std::unique_ptr<Converter> CreateConverter(
       std::unique_ptr<engine::Modules> modules,
       std::unique_ptr<RewriterInterface> rewriter,
@@ -321,22 +311,20 @@ class ConverterTest : public testing::TestWithTempUserProfile {
         [&](const engine::Modules &modules) {
           return std::make_unique<ImmutableConverter>(modules);
         },
-        [&](const engine::Modules &modules, const ConverterInterface *converter,
-            const ImmutableConverterInterface *immutable_converter) {
+        [&](const engine::Modules &modules, const ConverterInterface &converter,
+            const ImmutableConverterInterface &immutable_converter) {
           return CreatePredictor(modules, predictor_type, converter,
                                  immutable_converter);
         },
-        [&](const engine::Modules &modules) {
-          return std::move(rewriter);
-        });
+        [&](const engine::Modules &modules) { return std::move(rewriter); });
   }
 
   std::unique_ptr<Converter> CreateConverter(
       std::unique_ptr<RewriterInterface> rewriter,
       PredictorType predictor_type) {
-    auto modules = std::make_unique<engine::Modules>();
-    modules->PresetUserDictionary(std::make_unique<UserDictionaryStub>());
-    CHECK_OK(modules->Init(std::make_unique<testing::MockDataManager>()));
+    std::unique_ptr<engine::Modules> modules =
+        engine::Modules::Create(std::make_unique<testing::MockDataManager>())
+            .value();
     return CreateConverter(std::move(modules), std::move(rewriter),
                            predictor_type);
   }
@@ -352,13 +340,11 @@ class ConverterTest : public testing::TestWithTempUserProfile {
 
     auto pos_matcher = std::make_unique<dictionary::PosMatcher>(
         data_manager->GetPosMatcherData());
-    auto suppression_dictionary = std::make_unique<SuppressionDictionary>();
     auto user_dictionary = std::make_unique<dictionary::UserDictionary>(
-        dictionary::UserPos::CreateFromDataManager(*data_manager), *pos_matcher,
-        suppression_dictionary.get());
+        dictionary::UserPos::CreateFromDataManager(*data_manager),
+        *pos_matcher);
     {
       user_dictionary::UserDictionaryStorage storage;
-      using UserEntry = user_dictionary::UserDictionary::Entry;
       user_dictionary::UserDictionary *dictionary = storage.add_dictionaries();
       for (const UserDefinedEntry &user_entry : user_defined_entries) {
         UserEntry *entry = dictionary->add_entries();
@@ -369,12 +355,12 @@ class ConverterTest : public testing::TestWithTempUserProfile {
       user_dictionary->Load(storage);
     }
 
-    auto modules = std::make_unique<engine::Modules>();
-    modules->PresetPosMatcher(std::move(pos_matcher));
-    modules->PresetSuppressionDictionary(std::move(suppression_dictionary));
-    modules->PresetUserDictionary(std::move(user_dictionary));
-
-    CHECK_OK(modules->Init(std::move(data_manager)));
+    std::unique_ptr<engine::Modules> modules =
+        engine::ModulesPresetBuilder()
+            .PresetPosMatcher(std::move(pos_matcher))
+            .PresetUserDictionary(std::move(user_dictionary))
+            .Build(std::move(data_manager))
+            .value();
 
     return CreateConverter(std::move(modules), std::make_unique<StubRewriter>(),
                            predictor_type);
@@ -410,7 +396,6 @@ class ConverterTest : public testing::TestWithTempUserProfile {
 
  private:
   const commands::Request default_request_;
-  mozc::usage_stats::scoped_usage_stats_enabler usage_stats_enabler_;
 };
 
 // test for issue:2209644
@@ -418,7 +403,7 @@ class ConverterTest : public testing::TestWithTempUserProfile {
 // TODO(toshiyuki): make dictionary mock and test strictly.
 TEST_F(ConverterTest, CanConvertTest) {
   std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
   CHECK(converter);
   {
     Segments segments;
@@ -437,7 +422,7 @@ std::string ContextAwareConvert(const std::string &first_key,
                                 const std::string &first_value,
                                 const std::string &second_key) {
   std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
   CHECK(converter);
 
   Segments segments;
@@ -487,58 +472,25 @@ std::string ContextAwareConvert(const std::string &first_key,
 TEST_F(ConverterTest, ContextAwareConversionTest) {
   // Desirable context aware conversions
   EXPECT_EQ(ContextAwareConvert("きき", "危機", "いっぱつ"), "一髪");
-  EXPECT_TIMING_STATS("SubmittedSegmentLengthx1000", 2000, 1, 2000, 2000);
-  EXPECT_TIMING_STATS("SubmittedLengthx1000", 2000, 1, 2000, 2000);
-  EXPECT_TIMING_STATS("SubmittedSegmentNumberx1000", 1000, 1, 1000, 1000);
-  EXPECT_COUNT_STATS("SubmittedTotalLength", 2);
 
   EXPECT_EQ(ContextAwareConvert("きょうと", "京都", "だい"), "大");
-  EXPECT_TIMING_STATS("SubmittedSegmentLengthx1000", 4000, 2, 2000, 2000);
-  EXPECT_TIMING_STATS("SubmittedLengthx1000", 4000, 2, 2000, 2000);
-  EXPECT_TIMING_STATS("SubmittedSegmentNumberx1000", 2000, 2, 1000, 1000);
-  EXPECT_COUNT_STATS("SubmittedTotalLength", 4);
-
   EXPECT_EQ(ContextAwareConvert("もんだい", "問題", "てん"), "点");
-  EXPECT_TIMING_STATS("SubmittedSegmentLengthx1000", 6000, 3, 2000, 2000);
-  EXPECT_TIMING_STATS("SubmittedLengthx1000", 6000, 3, 2000, 2000);
-  EXPECT_TIMING_STATS("SubmittedSegmentNumberx1000", 3000, 3, 1000, 1000);
-  EXPECT_COUNT_STATS("SubmittedTotalLength", 6);
 
   EXPECT_EQ(ContextAwareConvert("いのうえ", "井上", "ようすい"), "陽水");
-  EXPECT_TIMING_STATS("SubmittedSegmentLengthx1000", 8000, 4, 2000, 2000);
-  EXPECT_TIMING_STATS("SubmittedLengthx1000", 8000, 4, 2000, 2000);
-  EXPECT_TIMING_STATS("SubmittedSegmentNumberx1000", 4000, 4, 1000, 1000);
-  EXPECT_COUNT_STATS("SubmittedTotalLength", 8);
 
   // Undesirable context aware conversions
   EXPECT_NE(ContextAwareConvert("19じ", "19時", "しゅうごう"), "宗号");
-  EXPECT_TIMING_STATS("SubmittedSegmentLengthx1000", 11000, 6, 1000, 2000);
-  EXPECT_TIMING_STATS("SubmittedLengthx1000", 11000, 5, 2000, 3000);
-  EXPECT_TIMING_STATS("SubmittedSegmentNumberx1000", 6000, 5, 1000, 2000);
-  EXPECT_COUNT_STATS("SubmittedTotalLength", 11);
 
   EXPECT_NE(ContextAwareConvert("の", "の", "なまえ"), "な前");
-  EXPECT_TIMING_STATS("SubmittedSegmentLengthx1000", 12000, 7, 1000, 2000);
-  EXPECT_TIMING_STATS("SubmittedLengthx1000", 12000, 6, 1000, 3000);
-  EXPECT_TIMING_STATS("SubmittedSegmentNumberx1000", 7000, 6, 1000, 2000);
-  EXPECT_COUNT_STATS("SubmittedTotalLength", 12);
 
   EXPECT_NE(ContextAwareConvert("の", "の", "しりょう"), "し料");
-  EXPECT_TIMING_STATS("SubmittedSegmentLengthx1000", 13000, 8, 1000, 2000);
-  EXPECT_TIMING_STATS("SubmittedLengthx1000", 13000, 7, 1000, 3000);
-  EXPECT_TIMING_STATS("SubmittedSegmentNumberx1000", 8000, 7, 1000, 2000);
-  EXPECT_COUNT_STATS("SubmittedTotalLength", 13);
 
   EXPECT_NE(ContextAwareConvert("ぼくと", "僕と", "しらいさん"), "し礼賛");
-  EXPECT_TIMING_STATS("SubmittedSegmentLengthx1000", 15000, 9, 1000, 2000);
-  EXPECT_TIMING_STATS("SubmittedLengthx1000", 15000, 8, 1000, 3000);
-  EXPECT_TIMING_STATS("SubmittedSegmentNumberx1000", 9000, 8, 1000, 2000);
-  EXPECT_COUNT_STATS("SubmittedTotalLength", 15);
 }
 
 TEST_F(ConverterTest, CommitSegmentValue) {
   std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
   CHECK(converter);
   Segments segments;
 
@@ -590,7 +542,7 @@ TEST_F(ConverterTest, CommitSegmentValue) {
 
 TEST_F(ConverterTest, CommitSegments) {
   std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
   CHECK(converter);
   Segments segments;
 
@@ -631,11 +583,6 @@ TEST_F(ConverterTest, CommitSegments) {
     EXPECT_EQ(segments.conversion_segments_size(), 1);
     EXPECT_EQ(segments.history_segment(0).segment_type(), Segment::HISTORY);
     EXPECT_EQ(segments.history_segment(1).segment_type(), Segment::SUBMITTED);
-
-    EXPECT_TIMING_STATS("SubmittedSegmentLengthx1000", 3000, 1, 3000, 3000);
-    EXPECT_TIMING_STATS("SubmittedLengthx1000", 3000, 1, 3000, 3000);
-    EXPECT_TIMING_STATS("SubmittedSegmentNumberx1000", 1000, 1, 1000, 1000);
-    EXPECT_COUNT_STATS("SubmittedTotalLength", 3);
   }
 
   // Reset the test data.
@@ -654,17 +601,12 @@ TEST_F(ConverterTest, CommitSegments) {
     EXPECT_EQ(segments.history_segment(0).segment_type(), Segment::HISTORY);
     EXPECT_EQ(segments.history_segment(1).segment_type(), Segment::SUBMITTED);
     EXPECT_EQ(segments.history_segment(2).segment_type(), Segment::SUBMITTED);
-
-    EXPECT_TIMING_STATS("SubmittedSegmentLengthx1000", 8000, 3, 2000, 3000);
-    EXPECT_TIMING_STATS("SubmittedLengthx1000", 8000, 2, 3000, 5000);
-    EXPECT_TIMING_STATS("SubmittedSegmentNumberx1000", 3000, 2, 1000, 2000);
-    EXPECT_COUNT_STATS("SubmittedTotalLength", 8);
   }
 }
 
 TEST_F(ConverterTest, CommitPartialSuggestionSegmentValue) {
   std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
   CHECK(converter);
   Segments segments;
 
@@ -708,129 +650,9 @@ TEST_F(ConverterTest, CommitPartialSuggestionSegmentValue) {
   }
 }
 
-TEST_F(ConverterTest, CommitPartialSuggestionUsageStats) {
-  std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
-  CHECK(converter);
-  Segments segments;
-
-  // History segment.
-  {
-    Segment *segment = segments.add_segment();
-    segment->set_key("あした");
-    segment->set_segment_type(Segment::HISTORY);
-
-    Segment::Candidate *candidate = segment->add_candidate();
-    candidate->key = "あした";
-    candidate->value = "今日";
-  }
-
-  {
-    Segment *segment = segments.add_segment();
-    segment->set_key("かつこうに");
-
-    Segment::Candidate *candidate = segment->add_candidate();
-    candidate->value = "学校に";
-    candidate->key = "がっこうに";
-
-    candidate = segment->add_candidate();
-    candidate->value = "格好に";
-    candidate->key = "かっこうに";
-
-    candidate = segment->add_candidate();
-    candidate->value = "かつこうに";
-    candidate->key = "かつこうに";
-  }
-
-  EXPECT_STATS_NOT_EXIST("CommitPartialSuggestion");
-  EXPECT_TRUE(converter->CommitPartialSuggestionSegmentValue(
-      &segments, 0, 1, "かつこうに", "いく"));
-  EXPECT_EQ(segments.history_segments_size(), 2);
-  EXPECT_EQ(segments.conversion_segments_size(), 1);
-  EXPECT_EQ(segments.history_segment(0).segment_type(), Segment::HISTORY);
-  EXPECT_EQ(segments.history_segment(1).segment_type(), Segment::SUBMITTED);
-  {
-    // The tail segment of the history segments uses
-    // CommitPartialSuggestionSegmentValue's |current_segment_key| parameter
-    // and contains original value.
-    const Segment &segment =
-        segments.history_segment(segments.history_segments_size() - 1);
-    EXPECT_EQ(segment.segment_type(), Segment::SUBMITTED);
-    EXPECT_EQ(segment.candidate(0).value, "格好に");
-    EXPECT_EQ(segment.candidate(0).key, "かっこうに");
-    EXPECT_EQ(segment.key(), "かつこうに");
-    EXPECT_NE(segment.candidate(0).attributes & Segment::Candidate::RERANKED,
-              0);
-  }
-  {
-    // The head segment of the conversion segments uses |new_segment_key|.
-    const Segment &segment = segments.conversion_segment(0);
-    EXPECT_EQ(segment.segment_type(), Segment::FREE);
-    EXPECT_EQ(segment.key(), "いく");
-  }
-
-  EXPECT_COUNT_STATS("CommitPartialSuggestion", 1);
-  EXPECT_TIMING_STATS("SubmittedSegmentLengthx1000", 3000, 1, 3000, 3000);
-  EXPECT_TIMING_STATS("SubmittedLengthx1000", 3000, 1, 3000, 3000);
-  EXPECT_TIMING_STATS("SubmittedSegmentNumberx1000", 1000, 1, 1000, 1000);
-  EXPECT_COUNT_STATS("SubmittedTotalLength", 3);
-}
-
-TEST_F(ConverterTest, CommitAutoPartialSuggestionUsageStats) {
-  std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
-  CHECK(converter);
-  Segments segments;
-
-  {
-    Segment *segment = segments.add_segment();
-    segment->set_key("かつこうにいく");
-
-    Segment::Candidate *candidate = segment->add_candidate();
-    candidate->value = "学校にいく";
-    candidate->key = "がっこうにいく";
-
-    candidate = segment->add_candidate();
-    candidate->value = "学校に行く";
-    candidate->key = "がっこうにいく";
-
-    candidate = segment->add_candidate();
-    candidate->value = "学校に";
-    candidate->key = "がっこうに";
-  }
-
-  EXPECT_STATS_NOT_EXIST("CommitPartialSuggestion");
-  EXPECT_TRUE(converter->CommitPartialSuggestionSegmentValue(
-      &segments, 0, 2, "かつこうに", "いく"));
-  EXPECT_EQ(segments.segments_size(), 2);
-  EXPECT_EQ(segments.history_segments_size(), 1);
-  EXPECT_EQ(segments.conversion_segments_size(), 1);
-  {
-    // The tail segment of the history segments uses
-    // CommitPartialSuggestionSegmentValue's |current_segment_key| parameter
-    // and contains original value.
-    const Segment &segment =
-        segments.history_segment(segments.history_segments_size() - 1);
-    EXPECT_EQ(segment.segment_type(), Segment::SUBMITTED);
-    EXPECT_EQ(segment.candidate(0).value, "学校に");
-    EXPECT_EQ(segment.candidate(0).key, "がっこうに");
-    EXPECT_EQ(segment.key(), "かつこうに");
-    EXPECT_NE(segment.candidate(0).attributes & Segment::Candidate::RERANKED,
-              0);
-  }
-  {
-    // The head segment of the conversion segments uses |new_segment_key|.
-    const Segment &segment = segments.conversion_segment(0);
-    EXPECT_EQ(segment.segment_type(), Segment::FREE);
-    EXPECT_EQ(segment.key(), "いく");
-  }
-
-  EXPECT_COUNT_STATS("CommitAutoPartialSuggestion", 1);
-}
-
 TEST_F(ConverterTest, CandidateKeyTest) {
   std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
   CHECK(converter);
   Segments segments;
   EXPECT_TRUE(converter->StartConversion(
@@ -842,7 +664,7 @@ TEST_F(ConverterTest, CandidateKeyTest) {
 
 TEST_F(ConverterTest, Regression3437022) {
   std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
   Segments segments;
 
   const std::string kKey1 = "けいたい";
@@ -876,14 +698,20 @@ TEST_F(ConverterTest, Regression3437022) {
     EXPECT_EQ(segments.conversion_segment(0).candidate(0).value, kValue2);
   }
 
-  // Add compound entry to suppression dictionary
   segments.Clear();
 
-  SuppressionDictionary *dic =
-      engine->GetModulesForTesting()->GetMutableSuppressionDictionary();
-  dic->Lock();
-  dic->AddEntry(kKey1 + kKey2, kValue1 + kValue2);
-  dic->UnLock();
+  // Add compound entry to suppression dictionary
+  {
+    user_dictionary::UserDictionaryStorage storage;
+    UserEntry *entry = storage.add_dictionaries()->add_entries();
+    entry->set_key(kKey1 + kKey2);
+    entry->set_value(kValue1 + kValue2);
+    entry->set_pos(user_dictionary::UserDictionary::SUPPRESSION_WORD);
+    engine->GetModulesForTesting().GetUserDictionary().Load(storage);
+    EXPECT_TRUE(engine->GetModulesForTesting()
+                    .GetUserDictionary()
+                    .HasSuppressedEntries());
+  }
 
   EXPECT_TRUE(converter->StartConversion(
       ConvReq(kKey1 + kKey2, ConversionRequest::CONVERSION), &segments));
@@ -903,10 +731,6 @@ TEST_F(ConverterTest, Regression3437022) {
   EXPECT_EQ(segments.conversion_segments_size(), 1);
   EXPECT_NE(segments.conversion_segment(0).candidate(0).value,
             kValue1 + kValue2);
-
-  dic->Lock();
-  dic->Clear();
-  dic->UnLock();
 }
 
 TEST_F(ConverterTest, CompletePosIds) {
@@ -928,8 +752,8 @@ TEST_F(ConverterTest, CompletePosIds) {
                 .max_conversion_candidates_size = 20,
             })
             .Build();
-    CHECK(converter->immutable_converter()->ConvertForRequest(request,
-                                                              &segments));
+    CHECK(
+        converter->immutable_converter().ConvertForRequest(request, &segments));
     const int lid = segments.segment(0).candidate(0).lid;
     const int rid = segments.segment(0).candidate(0).rid;
     Segment::Candidate candidate;
@@ -959,7 +783,7 @@ TEST_F(ConverterTest, CompletePosIds) {
 TEST_F(ConverterTest, Regression3046266) {
   // Shouldn't correct nodes at the beginning of a sentence.
   std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
   Segments segments;
 
   // Can be any string that has "ん" at the end
@@ -991,7 +815,7 @@ TEST_F(ConverterTest, Regression3046266) {
 TEST_F(ConverterTest, Regression5502496) {
   // Make sure key correction works for the first word of a sentence.
   std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
   Segments segments;
 
   constexpr char kKey[] = "みんあ";
@@ -1015,26 +839,29 @@ TEST_F(ConverterTest, StartSuggestion) {
   client_request.set_mixed_conversion(true);
 
   std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
   CHECK(converter);
 
   const std::string kShi = "し";
 
-  composer::Table table;
-  table.AddRule("si", kShi, "");
-  table.AddRule("shi", kShi, "");
+  auto table = std::make_shared<composer::Table>();
+  table->AddRule("si", kShi, "");
+  table->AddRule("shi", kShi, "");
   config::Config config;
 
   {
-    composer::Composer composer(&table, &client_request, &config);
+    composer::Composer composer(table, client_request, config);
 
     composer.InsertCharacter("shi");
 
-    commands::Context context;
     ConversionRequest::Options options = {.request_type =
                                               ConversionRequest::SUGGESTION};
-    const ConversionRequest request(composer, client_request, context, config,
-                                    std::move(options));
+    const ConversionRequest request = ConversionRequestBuilder()
+                                          .SetComposer(composer)
+                                          .SetRequestView(client_request)
+                                          .SetConfigView(config)
+                                          .SetOptions(std::move(options))
+                                          .Build();
 
     Segments segments;
     EXPECT_TRUE(converter->StartPrediction(request, &segments));
@@ -1047,15 +874,18 @@ TEST_F(ConverterTest, StartSuggestion) {
   }
 
   {
-    composer::Composer composer(&table, &client_request, &config);
+    composer::Composer composer(table, client_request, config);
 
     composer.InsertCharacter("si");
 
-    commands::Context context;
     ConversionRequest::Options options = {.request_type =
                                               ConversionRequest::SUGGESTION};
-    const ConversionRequest request(composer, client_request, context, config,
-                                    std::move(options));
+    const ConversionRequest request = ConversionRequestBuilder()
+                                          .SetComposer(composer)
+                                          .SetRequestView(client_request)
+                                          .SetConfigView(config)
+                                          .SetOptions(std::move(options))
+                                          .Build();
 
     Segments segments;
     EXPECT_TRUE(converter->StartPrediction(request, &segments));
@@ -1070,7 +900,7 @@ TEST_F(ConverterTest, StartSuggestion) {
 
 TEST_F(ConverterTest, StartPartialPrediction) {
   std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
   CHECK(converter);
   Segments segments;
   EXPECT_TRUE(converter->StartPrediction(
@@ -1082,7 +912,7 @@ TEST_F(ConverterTest, StartPartialPrediction) {
 
 TEST_F(ConverterTest, StartPartialSuggestion) {
   std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
   CHECK(converter);
   Segments segments;
   EXPECT_TRUE(converter->StartPrediction(
@@ -1094,7 +924,7 @@ TEST_F(ConverterTest, StartPartialSuggestion) {
 
 TEST_F(ConverterTest, StartPartialPredictionMobile) {
   std::unique_ptr<Engine> engine = CreateEngineWithMobilePredictor();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
   CHECK(converter);
   Segments segments;
   EXPECT_TRUE(converter->StartPrediction(
@@ -1106,7 +936,7 @@ TEST_F(ConverterTest, StartPartialPredictionMobile) {
 
 TEST_F(ConverterTest, StartPartialSuggestionMobile) {
   std::unique_ptr<Engine> engine = CreateEngineWithMobilePredictor();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
   CHECK(converter);
   Segments segments;
   EXPECT_TRUE(converter->StartPrediction(
@@ -1236,17 +1066,19 @@ TEST_F(ConverterTest, VariantExpansionForSuggestion) {
   EXPECT_CALL(*mock_user_dictionary, LookupPrefix(StrEq("てすとの"), _, _))
       .WillRepeatedly(InvokeCallbackWithUserDictionaryToken{"てすと", "<>!?"});
 
-  auto modules = std::make_unique<engine::Modules>();
-  modules->PresetUserDictionary(std::move(mock_user_dictionary));
-  CHECK_OK(modules->Init(std::make_unique<testing::MockDataManager>()));
+  std::unique_ptr<engine::Modules> modules =
+      engine::ModulesPresetBuilder()
+          .PresetUserDictionary(std::move(mock_user_dictionary))
+          .Build(std::make_unique<testing::MockDataManager>())
+          .value();
 
   Converter converter(
       std::move(modules),
       [&](const engine::Modules &modules) {
         return std::make_unique<ImmutableConverter>(modules);
       },
-      [](const engine::Modules &modules, const ConverterInterface *converter,
-         const ImmutableConverterInterface *immutable_converter) {
+      [](const engine::Modules &modules, const ConverterInterface &converter,
+         const ImmutableConverterInterface &immutable_converter) {
         return DefaultPredictor::CreateDefaultPredictor(
             std::make_unique<DictionaryPredictor>(modules, converter,
                                                   immutable_converter),
@@ -1282,12 +1114,12 @@ TEST_F(ConverterTest, VariantExpansionForSuggestion) {
 
 TEST_F(ConverterTest, ComposerKeySelection) {
   std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
-  composer::Table table;
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
+  auto table = std::make_shared<composer::Table>();
   config::Config config;
   {
     Segments segments;
-    composer::Composer composer(&table, &default_request(), &config);
+    composer::Composer composer(table, default_request(), config);
     composer.InsertCharacterPreedit("わたしh");
 
     const ConversionRequest request =
@@ -1303,7 +1135,7 @@ TEST_F(ConverterTest, ComposerKeySelection) {
   }
   {
     Segments segments;
-    composer::Composer composer(&table, &default_request(), &config);
+    composer::Composer composer(table, default_request(), config);
     composer.InsertCharacterPreedit("わたしh");
 
     const ConversionRequest request =
@@ -1322,19 +1154,23 @@ TEST_F(ConverterTest, SuppressionDictionaryForRewriter) {
   std::unique_ptr<Converter> converter = CreateConverter(
       std::make_unique<InsertPlaceholderWordsRewriter>(), STUB_PREDICTOR);
 
-  engine::Modules *modules = converter->modules();
+  engine::Modules &modules = converter->modules();
 
   // Set up suppression dictionary
-  modules->GetMutableSuppressionDictionary()->Lock();
-  modules->GetMutableSuppressionDictionary()->AddEntry("tobefiltered",
-                                                       "ToBeFiltered");
-  modules->GetMutableSuppressionDictionary()->UnLock();
-  EXPECT_FALSE(modules->GetMutableSuppressionDictionary()->IsEmpty());
+  {
+    user_dictionary::UserDictionaryStorage storage;
+    UserEntry *entry = storage.add_dictionaries()->add_entries();
+    entry->set_key("tobefiltered");
+    entry->set_value("ToBeFiltered");
+    entry->set_pos(user_dictionary::UserDictionary::SUPPRESSION_WORD);
+    modules.GetUserDictionary().Load(storage);
+    EXPECT_TRUE(modules.GetUserDictionary().HasSuppressedEntries());
+  }
 
   // Convert
-  composer::Table table;
+  auto table = std::make_shared<composer::Table>();
   config::Config config;
-  composer::Composer composer(&table, &default_request(), &config);
+  composer::Composer composer(table, default_request(), config);
   composer.InsertCharacter("placeholder");
   commands::Context context;
   const ConversionRequest request = ConversionRequestBuilder()
@@ -1355,7 +1191,7 @@ TEST_F(ConverterTest, SuppressionDictionaryForRewriter) {
 TEST_F(ConverterTest, EmptyConvertReverseIssue8661091) {
   // This is a test case against b/8661091.
   std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
 
   Segments segments;
   EXPECT_FALSE(converter->StartReverseConversion(&segments, ""));
@@ -1363,7 +1199,8 @@ TEST_F(ConverterTest, EmptyConvertReverseIssue8661091) {
 
 TEST_F(ConverterTest, StartReverseConversion) {
   std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
-  const ConverterInterface *converter = engine->GetConverter();
+  const std::shared_ptr<const ConverterInterface> converter =
+      engine->GetConverter();
 
   const std::string kHonKanji = "本";
   const std::string kHonHiragana = "ほん";
@@ -1508,7 +1345,7 @@ TEST_F(ConverterTest, StartReverseConversion) {
 
 TEST_F(ConverterTest, ReconstructHistory) {
   std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
 
   constexpr char kTen[] = "１０";
 
@@ -1531,12 +1368,12 @@ TEST_F(ConverterTest, ReconstructHistory) {
 
 TEST_F(ConverterTest, LimitCandidatesSize) {
   std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
 
-  composer::Table table;
+  auto table = std::make_shared<composer::Table>();
   const config::Config &config = config::ConfigHandler::DefaultConfig();
   mozc::commands::Request request_proto;
-  mozc::composer::Composer composer(&table, &request_proto, &config);
+  mozc::composer::Composer composer(table, request_proto, config);
   composer.InsertCharacterPreedit("あ");
   const ConversionRequest request1 = ConversionRequestBuilder()
                                          .SetComposer(composer)
@@ -1609,8 +1446,8 @@ TEST_F(ConverterTest, UserEntryInMobilePrediction) {
   commands::Request request;
   config::Config config;
   config::ConfigHandler::GetDefaultConfig(&config);
-  composer::Table table;
-  composer::Composer composer(&table, &request, &config);
+  auto table = std::make_shared<composer::Table>();
+  composer::Composer composer(table, request, config);
   request_test_util::FillMobileRequest(&request);
 
   std::unique_ptr<Converter> converter = CreateConverterWithUserDefinedEntries(
@@ -1618,12 +1455,16 @@ TEST_F(ConverterTest, UserEntryInMobilePrediction) {
 
   {
     composer.SetPreeditTextForTestOnly("てすとが");
-    commands::Context context;
     ConversionRequest::Options options = {
         .request_type = ConversionRequest::PREDICTION,
     };
-    const ConversionRequest conversion_request(composer, request, context,
-                                               config, std::move(options));
+    const ConversionRequest conversion_request =
+        ConversionRequestBuilder()
+            .SetComposer(composer)
+            .SetRequestView(request)
+            .SetConfigView(config)
+            .SetOptions(std::move(options))
+            .Build();
     Segments segments;
     EXPECT_TRUE(converter->StartPrediction(conversion_request, &segments));
     ASSERT_EQ(segments.segments_size(), 1);
@@ -1794,23 +1635,27 @@ TEST_F(ConverterTest, SuggestionOnlyShouldBeIndependentPrediction) {
 
 TEST_F(ConverterTest, RewriterShouldRespectDefaultCandidates) {
   std::unique_ptr<Engine> engine = CreateEngineWithMobilePredictor();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
   CHECK(converter);
 
   config::Config config;
   config::ConfigHandler::GetDefaultConfig(&config);
   commands::Request request;
   request_test_util::FillMobileRequest(&request);
-  composer::Table table;
-  composer::Composer composer(&table, &request, &config);
+  auto table = std::make_shared<composer::Table>();
+  composer::Composer composer(table, request, config);
   composer.SetPreeditTextForTestOnly("あい");
-  commands::Context context;
 
   ConversionRequest::Options options = {
       .request_type = ConversionRequest::PREDICTION,
   };
-  const ConversionRequest conversion_request(composer, request, context, config,
-                                             std::move(options));
+  const ConversionRequest conversion_request =
+      ConversionRequestBuilder()
+          .SetComposer(composer)
+          .SetRequestView(request)
+          .SetConfigView(config)
+          .SetOptions(std::move(options))
+          .Build();
   Segments segments;
 
   // Remember user history 3 times after getting the top candidate
@@ -1853,22 +1698,27 @@ TEST_F(ConverterTest, RewriterShouldRespectDefaultCandidates) {
 TEST_F(ConverterTest,
        DoNotPromotePrefixOfSingleEntryForEnrichPartialCandidates) {
   std::unique_ptr<Engine> engine = CreateEngineWithMobilePredictor();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
   CHECK(converter);
 
   commands::Request request;
   config::Config config;
   config::ConfigHandler::GetDefaultConfig(&config);
-  composer::Table table;
-  composer::Composer composer(&table, &request, &config);
+  auto table = std::make_shared<composer::Table>();
+  composer::Composer composer(table, request, config);
   request_test_util::FillMobileRequest(&request);
   composer.SetPreeditTextForTestOnly("おつかれ");
-  commands::Context context;
 
   ConversionRequest::Options options = {.request_type =
                                             ConversionRequest::PREDICTION};
-  const ConversionRequest conversion_request(composer, request, context, config,
-                                             std::move(options));
+  const ConversionRequest conversion_request =
+      ConversionRequestBuilder()
+          .SetComposer(composer)
+          .SetRequestView(request)
+          .SetConfigView(config)
+          .SetOptions(std::move(options))
+          .Build();
+
   Segments segments;
 
   EXPECT_TRUE(converter->StartPrediction(conversion_request, &segments));
@@ -1882,23 +1732,28 @@ TEST_F(ConverterTest,
 
 TEST_F(ConverterTest, DoNotAddOverlappingNodesForPrediction) {
   std::unique_ptr<Engine> engine = CreateEngineWithMobilePredictor();
-  ConverterInterface *converter = engine->GetConverter();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
   CHECK(converter);
   commands::Request request;
   config::Config config;
   config::ConfigHandler::GetDefaultConfig(&config);
-  composer::Table table;
-  composer::Composer composer(&table, &request, &config);
+  auto table = std::make_shared<composer::Table>();
+  composer::Composer composer(table, request, config);
   request_test_util::FillMobileRequest(&request);
   const dictionary::PosMatcher pos_matcher(
-      engine->GetModulesForTesting()->GetDataManager().GetPosMatcherData());
-  commands::Context context;
+      engine->GetModulesForTesting().GetDataManager().GetPosMatcherData());
   ConversionRequest::Options options = {
       .request_type = ConversionRequest::PREDICTION,
       .create_partial_candidates = true,
   };
-  const ConversionRequest conversion_request(composer, request, context, config,
-                                             std::move(options));
+
+  const ConversionRequest conversion_request =
+      ConversionRequestBuilder()
+          .SetComposer(composer)
+          .SetRequestView(request)
+          .SetConfigView(config)
+          .SetOptions(std::move(options))
+          .Build();
 
   Segments segments;
   // History segment.
@@ -1927,9 +1782,9 @@ TEST_F(ConverterTest, RevertConversion) {
   EXPECT_CALL(*mock_predictor, Revert(_)).Times(1);
   EXPECT_CALL(*mock_rewriter, Revert(_)).Times(1);
 
-  auto modules = std::make_unique<engine::Modules>();
-  modules->PresetUserDictionary(std::make_unique<UserDictionaryStub>());
-  CHECK_OK(modules->Init(std::make_unique<testing::MockDataManager>()));
+  std::unique_ptr<engine::Modules> modules =
+      engine::Modules::Create(std::make_unique<testing::MockDataManager>())
+          .value();
 
   std::unique_ptr<Converter> converter = std::make_unique<Converter>(
       std::move(modules),
@@ -1937,8 +1792,8 @@ TEST_F(ConverterTest, RevertConversion) {
         return std::make_unique<ImmutableConverter>(modules);
       },
       [&mock_predictor](
-          const engine::Modules &modules, const ConverterInterface *converter,
-          const ImmutableConverterInterface *immutable_converter) {
+          const engine::Modules &modules, const ConverterInterface &converter,
+          const ImmutableConverterInterface &immutable_converter) {
         return std::move(mock_predictor);
       },
       [&mock_rewriter](const engine::Modules &modules) {
@@ -1955,9 +1810,8 @@ TEST_F(ConverterTest, ResizeSegmentWithOffset) {
   constexpr Segment::SegmentType kFixedBoundary = Segment::FIXED_BOUNDARY;
   constexpr Segment::SegmentType kFree = Segment::FREE;
 
-  std::unique_ptr<EngineInterface> engine =
-      MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
 
   {
     // Resize {"あいうえ"} to {"あいう", "え"}
@@ -2059,9 +1913,8 @@ TEST_F(ConverterTest, ResizeSegmentsWithArray) {
   constexpr Segment::SegmentType kFixedBoundary = Segment::FIXED_BOUNDARY;
   constexpr Segment::SegmentType kFree = Segment::FREE;
 
-  std::unique_ptr<EngineInterface> engine =
-      MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
 
   {
     // Resize {"あいうえ"} to {"あいう", "え"}
@@ -2296,9 +2149,8 @@ TEST_F(ConverterTest, ResizeSegmentsRequest) {
 }
 
 TEST_F(ConverterTest, IntegrationWithCalculatorRewriter) {
-  std::unique_ptr<EngineInterface> engine =
-      MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
 
   {
     Segments segments;
@@ -2315,7 +2167,7 @@ TEST_F(ConverterTest, IntegrationWithDateRewriter) {
   // Since DateRewriter is not used in some build targets, the test needs to
   // explicitly add it to the converter.
   std::unique_ptr<Converter> converter = CreateConverter(
-      std::make_unique<DateRewriter>(&dictionary), STUB_PREDICTOR);
+      std::make_unique<DateRewriter>(dictionary), STUB_PREDICTOR);
 
   {
     Segments segments;
@@ -2338,9 +2190,8 @@ TEST_F(ConverterTest, IntegrationWithDateRewriter) {
 }
 
 TEST_F(ConverterTest, IntegrationWithSymbolRewriter) {
-  std::unique_ptr<EngineInterface> engine =
-      MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
 
   {
     Segments segments;
@@ -2353,9 +2204,8 @@ TEST_F(ConverterTest, IntegrationWithSymbolRewriter) {
 }
 
 TEST_F(ConverterTest, IntegrationWithUnicodeRewriter) {
-  std::unique_ptr<EngineInterface> engine =
-      MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
 
   {
     Segments segments;
@@ -2368,9 +2218,8 @@ TEST_F(ConverterTest, IntegrationWithUnicodeRewriter) {
 }
 
 TEST_F(ConverterTest, IntegrationWithSmallLetterRewriter) {
-  std::unique_ptr<EngineInterface> engine =
-      MockDataEngineFactory::Create().value();
-  ConverterInterface *converter = engine->GetConverter();
+  std::unique_ptr<Engine> engine = MockDataEngineFactory::Create().value();
+  std::shared_ptr<const ConverterInterface> converter = engine->GetConverter();
 
   {
     Segments segments;

@@ -17,6 +17,9 @@ MODULE.bazel.lock
 .DS_Store
 
 # third_party dirs and cache dir checked out by update_deps.py
+/src/third_party/llvm/
+/src/third_party/msys64/
+/src/third_party/ndk/
 /src/third_party/ninja/
 /src/third_party/qt/
 /src/third_party/qt_host/
@@ -37,10 +40,6 @@ MODULE.bazel.lock
 /oss
 /src-*
 /src_*
-
-# Python venv dir used to conform PEP 668
-# https://peps.python.org/pep-0668/
-/src/python-venv
 
 # Mozc build artifacts by Bazel (symbolic links)
 /src/bazel-bin

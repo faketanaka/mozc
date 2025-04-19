@@ -157,7 +157,7 @@ std::string A11yDescriptionRewriter::GetKanaCharacterLabel(
 }
 
 A11yDescriptionRewriter::A11yDescriptionRewriter(
-    const DataManager *data_manager)
+    const DataManager &data_manager)
     : small_letter_set_(
           {// Small hiragana
            U'ぁ', U'ぃ', U'ぅ', U'ぇ', U'ぉ', U'ゃ', U'ゅ', U'ょ', U'っ', U'ゎ',
@@ -177,8 +177,8 @@ A11yDescriptionRewriter::A11yDescriptionRewriter(
           {U'ｯ', U'ﾂ'},
       }) {
   absl::string_view token_array_data, string_array_data;
-  data_manager->GetA11yDescriptionRewriterData(&token_array_data,
-                                               &string_array_data);
+  data_manager.GetA11yDescriptionRewriterData(&token_array_data,
+                                              &string_array_data);
   description_map_ = (token_array_data.empty() || string_array_data.empty())
                          ? nullptr
                          : std::make_unique<SerializedDictionary>(
@@ -187,13 +187,13 @@ A11yDescriptionRewriter::A11yDescriptionRewriter(
 
 void A11yDescriptionRewriter::AddA11yDescription(
     Segment::Candidate *candidate) const {
-  const std::string &content_value = candidate->content_value;
+  absl::string_view content_value = candidate->content_value;
   std::string buf(content_value);
   CharacterType previous_type = INITIAL_STATE;
   CharacterType current_type = INITIAL_STATE;
   std::vector<std::string> graphemes;
   Util::SplitStringToUtf8Graphemes(content_value, &graphemes);
-  for (const std::string &grapheme : graphemes) {
+  for (absl::string_view grapheme : graphemes) {
     const std::u32string codepoints = Util::Utf8ToUtf32(grapheme);
     for (const char32_t codepoint : codepoints) {
       previous_type = current_type;

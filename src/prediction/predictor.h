@@ -33,7 +33,6 @@
 #include <memory>
 #include <string>
 
-#include "absl/base/attributes.h"
 #include "absl/strings/string_view.h"
 #include "converter/converter_interface.h"
 #include "converter/segments.h"
@@ -47,7 +46,7 @@ class BasePredictor : public PredictorInterface {
   // Initializes the composite of predictor with given sub-predictors.
   BasePredictor(std::unique_ptr<PredictorInterface> dictionary_predictor,
                 std::unique_ptr<PredictorInterface> user_history_predictor,
-                const ConverterInterface *converter);
+                const ConverterInterface &converter);
 
   // Hook(s) for all mutable operations.
   void Finish(const ConversionRequest &request, Segments *segments) override;
@@ -86,7 +85,7 @@ class BasePredictor : public PredictorInterface {
  private:
   void PopulateReadingOfCommittedCandidateIfMissing(Segments *segments) const;
 
-  const ConverterInterface *converter_;
+  const ConverterInterface &converter_;
 };
 
 // TODO(team): The name should be DesktopPredictor
@@ -95,17 +94,17 @@ class DefaultPredictor : public BasePredictor {
   static std::unique_ptr<PredictorInterface> CreateDefaultPredictor(
       std::unique_ptr<PredictorInterface> dictionary_predictor,
       std::unique_ptr<PredictorInterface> user_history_predictor,
-      const ConverterInterface *converter);
+      const ConverterInterface &converter);
 
   DefaultPredictor(std::unique_ptr<PredictorInterface> dictionary_predictor,
                    std::unique_ptr<PredictorInterface> user_history_predictor,
-                   const ConverterInterface *converter);
+                   const ConverterInterface &converter);
   ~DefaultPredictor() override;
 
-  ABSL_MUST_USE_RESULT bool PredictForRequest(
-      const ConversionRequest &request, Segments *segments) const override;
+  [[nodiscard]] bool PredictForRequest(const ConversionRequest &request,
+                                       Segments *segments) const override;
 
-  const std::string &GetPredictorName() const override {
+  absl::string_view GetPredictorName() const override {
     return predictor_name_;
   }
 
@@ -118,17 +117,17 @@ class MobilePredictor : public BasePredictor {
   static std::unique_ptr<PredictorInterface> CreateMobilePredictor(
       std::unique_ptr<PredictorInterface> dictionary_predictor,
       std::unique_ptr<PredictorInterface> user_history_predictor,
-      const ConverterInterface *converter);
+      const ConverterInterface &converter);
 
   MobilePredictor(std::unique_ptr<PredictorInterface> dictionary_predictor,
                   std::unique_ptr<PredictorInterface> user_history_predictor,
-                  const ConverterInterface *converter);
+                  const ConverterInterface &converter);
   ~MobilePredictor() override;
 
-  ABSL_MUST_USE_RESULT bool PredictForRequest(
-      const ConversionRequest &request, Segments *segments) const override;
+  [[nodiscard]] bool PredictForRequest(const ConversionRequest &request,
+                                       Segments *segments) const override;
 
-  const std::string &GetPredictorName() const override {
+  absl::string_view GetPredictorName() const override {
     return predictor_name_;
   }
 

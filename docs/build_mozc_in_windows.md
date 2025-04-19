@@ -8,7 +8,7 @@ How to build Mozc in Windows
 If you are not sure what the following commands do, please check the descriptions below and make sure the operations before running them.
 
 ```
-python -m pip install six requests
+python -m pip install six
 
 git clone https://github.com/google/mozc.git
 cd mozc\src
@@ -40,7 +40,6 @@ Building Mozc on Windows requires the following software.
     * [Build Tools for Visual Studio 2022](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022) should also work
   * Python 3.9 or later with the following pip modules.
     * `six`
-    * `requests`
   * `.NET 6` or later (for `dotnet` command).
 
 For additional requirements for building Mozc with Bazel, please see below.
@@ -48,7 +47,7 @@ For additional requirements for building Mozc with Bazel, please see below.
 ### Install pip modules
 
 ```
-python3 -m pip install six requests
+python -m pip install six
 ```
 
 ### Download the repository from GitHub
@@ -68,6 +67,8 @@ python build_tools/update_deps.py
 
 In this step, additional build dependencies will be downloaded.
 
+  * [LLVM 20.1.1](https://github.com/llvm/llvm-project/releases/tag/llvmorg-20.1.1)
+  * [MSYS2 2025-02-21](https://github.com/msys2/msys2-installer/releases/tag/2025-02-21)
   * [Ninja 1.11.0](https://github.com/ninja-build/ninja/releases/download/v1.11.0/ninja-win.zip)
   * [Qt 6.8.0](https://download.qt.io/archive/qt/6.8/6.8.0/submodules/qtbase-everywhere-src-6.8.0.tar.xz)
   * [.NET tools](../dotnet-tools.json)
@@ -167,13 +168,13 @@ Note that you can specify `--qtdir=` option instead of `--noqt` in GYP phase sin
 Additional requirements:
 
 * [Bazelisk](https://github.com/bazelbuild/bazelisk)
-  * Bazelisk is a wrapper of [Bazel](https://bazel.build/) to use the specific version of Bazel.
-* [MSYS2](https://github.com/msys2/msys2)
+  * Bazelisk is a wrapper of [Bazel](https://bazel.build) to use the specific version of Bazel.
+  * [src/.bazeliskrc](../src/.bazeliskrc) controls which version of Bazel is used.
 
 After running `build_tools/update_deps.py` and `build_tools/build_qt.py`, run the following command instead of `build_mozc.py`:
 
 ```
-bazelisk --bazelrc=windows.bazelrc build --config oss_windows --config release_build package
+bazelisk build --config oss_windows --config release_build package
 ```
 
 You have release build binaries in `bazel-bin\win32\installer\Mozc64.msi`.
@@ -181,9 +182,6 @@ You have release build binaries in `bazel-bin\win32\installer\Mozc64.msi`.
 ### Tips for Bazel setup
 
 * You do not need to install a new JDK just for Mozc.
-* If you installed Bazel via [Scoop](https://scoop.sh), it is recommended to install MSYS2 via Scoop, too.
-
-https://bazel.build/install/windows?hl=ja#install-compilers
 
 ---
 

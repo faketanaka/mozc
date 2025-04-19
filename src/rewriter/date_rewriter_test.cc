@@ -30,6 +30,7 @@
 #include "rewriter/date_rewriter.h"
 
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -550,7 +551,7 @@ TEST_F(DateRewriterTest, NumberRewriterTest) {
   DateRewriter rewriter;
   const commands::Request request;
   const config::Config config;
-  const composer::Composer composer(nullptr, &request, &config);
+  const composer::Composer composer(request, config);
   const ConversionRequest conversion_request =
       ConversionRequestBuilder().SetComposer(composer).Build();
 
@@ -902,12 +903,12 @@ TEST_F(DateRewriterTest, NumberRewriterFromRawInputTest) {
   Segments segments;
   DateRewriter rewriter;
 
-  composer::Table table;
-  table.AddRule("222", "c", "");
-  table.AddRule("3", "d", "");
+  auto table = std::make_shared<composer::Table>();
+  table->AddRule("222", "c", "");
+  table->AddRule("3", "d", "");
   const commands::Request request;
   const config::Config config;
-  composer::Composer composer(&table, &request, &config);
+  composer::Composer composer(table, request, config);
 
   // Key sequence : 2223
   // Preedit : cd
@@ -982,7 +983,7 @@ TEST_F(DateRewriterTest, MobileEnvironmentTest) {
 TEST_F(DateRewriterTest, ConsecutiveDigitsInsertPositionTest) {
   commands::Request request;
   const config::Config config;
-  const composer::Composer composer(nullptr, &request, &config);
+  const composer::Composer composer(request, config);
 
   // Init an instance of Segments for this test.
   Segments test_segments;
@@ -1039,7 +1040,7 @@ TEST_F(DateRewriterTest, ConsecutiveDigitsInsertPositionTest) {
 TEST_F(DateRewriterTest, ConsecutiveDigitsFromMetaCandidates) {
   commands::Request request;
   const config::Config config;
-  const composer::Composer composer(nullptr, &request, &config);
+  const composer::Composer composer(request, config);
   const ConversionRequest conversion_request =
       ConversionRequestBuilder().SetComposer(composer).Build();
 
@@ -1057,7 +1058,7 @@ TEST_F(DateRewriterTest, ConsecutiveDigitsFromMetaCandidates) {
 TEST_F(DateRewriterTest, ConsecutiveDigitsWithMinusSign) {
   commands::Request request;
   const config::Config config;
-  const composer::Composer composer(nullptr, &request, &config);
+  const composer::Composer composer(request, config);
   const ConversionRequest conversion_request =
       ConversionRequestBuilder().SetComposer(composer).Build();
 
@@ -1083,7 +1084,7 @@ TEST_F(DateRewriterTest, ConsecutiveDigitsWithMinusSign) {
 TEST_F(DateRewriterTest, ConsecutiveDigitsInsertPositionWithHistory) {
   commands::Request request;
   const config::Config config;
-  const composer::Composer composer(nullptr, &request, &config);
+  const composer::Composer composer(request, config);
   const ConversionRequest conversion_request =
       ConversionRequestBuilder().SetComposer(composer).Build();
 
@@ -1124,7 +1125,7 @@ TEST_F(DateRewriterTest, ExtraFormatTest) {
       .WillOnce(InvokeCallbackWithUserDictionaryToken{"{YEAR}{MONTH}{DATE}"});
 
   MockConverter converter;
-  DateRewriter rewriter(&dictionary);
+  DateRewriter rewriter(dictionary);
 
   Segments segments;
   InitSegment("きょう", "今日", &segments);
@@ -1158,7 +1159,7 @@ TEST_F(DateRewriterTest, ExtraFormatSyntaxTest) {
                 LookupExact(StrEq(DateRewriter::kExtraFormatKey), _, _))
         .WillOnce(InvokeCallbackWithUserDictionaryToken{std::string(input)});
     MockConverter converter;
-    DateRewriter rewriter(&dictionary);
+    DateRewriter rewriter(dictionary);
     Segments segments;
     InitSegment("きょう", "今日", &segments);
     const ConversionRequest request;
@@ -1278,7 +1279,7 @@ INSTANTIATE_TEST_SUITE_P(
 TEST_P(RewriteAdTest, MockConverter) {
   const RewriteAdData &data = GetParam();
   MockDictionary dictionary;
-  DateRewriter rewriter(&dictionary);
+  DateRewriter rewriter(dictionary);
   Segments segments;
   for (const auto &[key, value] : data.segments) {
     AppendSegment(key, value, &segments);
@@ -1314,7 +1315,7 @@ TEST_P(RewriteAdTest, MockConverter) {
 // Test if `Segments::set_resized(true)` prevents merging segments.
 TEST_F(DateRewriterTest, RewriteAdResizedSegments) {
   MockDictionary dictionary;
-  DateRewriter rewriter(&dictionary);
+  DateRewriter rewriter(dictionary);
   Segments segments;
   InitSegment("へいせい", "平成", &segments);
   AppendSegment("23", "23", &segments);

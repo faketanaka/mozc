@@ -34,6 +34,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -42,10 +43,10 @@
 #include "absl/container/btree_set.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "composer/internal/composition.h"
-#include "composer/internal/composition_input.h"
-#include "composer/internal/transliterators.h"
+#include "composer/composition.h"
+#include "composer/composition_input.h"
 #include "composer/table.h"
+#include "composer/transliterators.h"
 #include "protocol/commands.pb.h"
 #include "protocol/config.pb.h"
 #include "testing/friend_test.h"
@@ -54,17 +55,15 @@
 namespace mozc {
 namespace composer {
 
+std::shared_ptr<const commands::Request> GetSharedDefaultRequest();
+
 // ComposerData is a data structure that represents the current state of the
-// composer. It is used by Converter, Predictor and Rewriters as a const object.
+// composer. It is used by Converter, Predictor and Rewriters as a const
+// object.
 class ComposerData {
  public:
-  // This constructor is temporary and should be removed, when ConverterRequest
-  // is updated to use a const ComposerData.
-  ABSL_DEPRECATED("Do not use this constructor except in converter_request.h")
-  ComposerData(): composition_(Composition(nullptr)) {}
-
-  ComposerData(Composition composition,
-               size_t position,
+  ComposerData() = delete;
+  ComposerData(Composition composition, size_t position,
                transliteration::TransliterationType input_mode,
                commands::Context::InputFieldType input_field_type,
                std::string source_text,
@@ -89,8 +88,8 @@ class ComposerData {
   std::string GetQueryForPrediction() const;
 
   // Returns a expanded prediction query.
-  std::pair<std::string, absl::btree_set<std::string>>
-  GetQueriesForPrediction() const;
+  std::pair<std::string, absl::btree_set<std::string>> GetQueriesForPrediction()
+      const;
 
   // Returns a string to be used for type correction.
   std::string GetStringForTypeCorrection() const;
@@ -111,14 +110,13 @@ class ComposerData {
   std::string GetRawSubString(size_t position, size_t size) const;
 
   // Generate transliterations.
-  void GetTransliterations(
-      transliteration::Transliterations *t13ns) const;
+  void GetTransliterations(transliteration::Transliterations *t13ns) const;
 
   // Generate substrings of transliterations.
   void GetSubTransliterations(size_t position, size_t size,
                               transliteration::Transliterations *t13ns) const;
 
-  absl::string_view source_text() const {return source_text_; }
+  absl::string_view source_text() const { return source_text_; }
 
  private:
   // Composition copied from the Composer as a snapshot.
@@ -146,8 +144,8 @@ class ComposerData {
 };
 
 // Composer is a class that manages the composing text. It provides methods to
-// edit the text by users. Composer creates ComposerData as the snapshot of the
-// current state of the composer.
+// edit the text by users. Composer creates ComposerData as the snapshot of
+// the current state of the composer.
 class Composer final {
  public:
   // Pseudo commands in composer.
@@ -157,8 +155,21 @@ class Composer final {
   };
 
   Composer();
-  Composer(const Table *table, const commands::Request *request,
-           const config::Config *config);
+  Composer(std::shared_ptr<const Table> table,
+           std::shared_ptr<const commands::Request> request,
+           std::shared_ptr<const config::Config> config);
+
+  // This constructor is for testing.
+  ABSL_DEPRECATED("Use the constructor with Table")
+  Composer(std::shared_ptr<const commands::Request> request,
+           std::shared_ptr<const config::Config> config);
+
+  // Copies `request` and `config`.
+
+  ABSL_DEPRECATED("Use the constructor with Table")
+  Composer(commands::Request request, config::Config config);
+  Composer(std::shared_ptr<const Table> table, commands::Request request,
+           config::Config config);
 
   // Copyable and movable.
   Composer(const Composer &) = default;
@@ -166,8 +177,8 @@ class Composer final {
   Composer(Composer &&) = default;
   Composer &operator=(Composer &&) = default;
 
-  // Return an empty ComposerData used for placeholder.
-  static ComposerData CreateEmptyComposerData();
+  // Returns a reference of empty ComposerData used for placeholder.
+  static const ComposerData &EmptyComposerData();
 
   // Return a ComposerData with the current state of the composer.
   ComposerData CreateComposerData() const;
@@ -187,10 +198,10 @@ class Composer final {
   // Check the preedit string is empty or not.
   bool Empty() const;
 
-  void SetTable(const Table *table);
+  void SetTable(std::shared_ptr<const Table> table);
 
-  void SetRequest(const commands::Request *request);
-  void SetConfig(const config::Config *config);
+  void SetRequest(std::shared_ptr<const commands::Request> request);
+  void SetConfig(std::shared_ptr<const config::Config> config);
 
   void SetInputMode(transliteration::TransliterationType mode);
   void SetTemporaryInputMode(transliteration::TransliterationType mode);
@@ -228,8 +239,8 @@ class Composer final {
   std::string GetQueryForPrediction() const;
 
   // Returns a expanded prediction query.
-  std::pair<std::string, absl::btree_set<std::string>>
-  GetQueriesForPrediction() const;
+  std::pair<std::string, absl::btree_set<std::string>> GetQueriesForPrediction()
+      const;
 
   // Returns a string to be used for type correction.
   std::string GetStringForTypeCorrection() const;
@@ -301,8 +312,7 @@ class Composer final {
   std::string GetRawSubString(size_t position, size_t size) const;
 
   // Generate transliterations.
-  void GetTransliterations(
-      transliteration::Transliterations *t13ns) const;
+  void GetTransliterations(transliteration::Transliterations *t13ns) const;
 
   // Generate substrings of specified transliteration.
   std::string GetSubTransliteration(transliteration::TransliterationType type,
@@ -382,7 +392,6 @@ class Composer final {
   commands::Context::InputFieldType input_field_type_;
 
   size_t shifted_sequence_count_;
-  Composition composition_;
 
   // The original text for the composition.  The value is usually
   // empty, and used for reverse conversion.
@@ -390,12 +399,21 @@ class Composer final {
 
   size_t max_length_;
 
-  const commands::Request *request_;
-  const config::Config *config_;
-  const Table *table_;
+  std::shared_ptr<const commands::Request> request_;
+  std::shared_ptr<const config::Config> config_;
+
+  // Though we would like to avoid shared object, Table is not copyable so
+  // there is no other way to share them at this moment. The internal data
+  // of the Table is managed by std::unique_ptr, which makes simple copying
+  // impossible. Furthermore, copying the table every time would result in
+  // a significant performance degradation. Style guide says that we prefer
+  // to use std::shared_ptr for shared object.
+  std::shared_ptr<const Table> table_;
+
+  Composition composition_;
 
   // Timestamp of last modified.
-  int64_t timestamp_msec_;
+  int64_t timestamp_msec_ = 0;
 
   // If the duration between key inputs is more than timeout_threadhols_msec_,
   // the STOP_KEY_TOGGLING event is sent before the next key input.

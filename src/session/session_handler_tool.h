@@ -43,8 +43,7 @@
 #include "protocol/candidate_window.pb.h"
 #include "protocol/commands.pb.h"
 #include "protocol/config.pb.h"
-#include "session/session_handler_interface.h"
-#include "session/session_observer_interface.h"
+#include "session/session_handler.h"
 
 namespace mozc {
 namespace session {
@@ -101,8 +100,7 @@ class SessionHandlerTool {
 
   uint64_t id_;  // Session ID
   EngineInterface *engine_ = nullptr;
-  std::unique_ptr<SessionObserverInterface> usage_observer_;
-  std::unique_ptr<SessionHandlerInterface> handler_;
+  std::unique_ptr<SessionHandler> handler_;
   std::string callback_text_;
 };
 
@@ -132,7 +130,7 @@ class SessionHandlerInterpreter final {
 
  private:
   std::unique_ptr<SessionHandlerTool> client_;
-  std::unique_ptr<config::Config> config_;
+  config::Config config_;
   std::unique_ptr<commands::Output> last_output_;
   std::unique_ptr<commands::Request> request_;
 };

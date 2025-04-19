@@ -29,6 +29,7 @@
 
 // JNI wrapper for SessionHandler.
 
+#include <utility>
 #ifdef __ANDROID__
 
 #include <jni.h>
@@ -48,14 +49,13 @@
 #include "engine/engine.h"
 #include "protocol/commands.pb.h"
 #include "session/session_handler.h"
-#include "session/session_usage_observer.h"
 
 namespace mozc {
 namespace jni {
 namespace {
 
 // The global instance of Mozc system to be initialized in onPostLoad().
-std::unique_ptr<SessionHandlerInterface> g_session_handler;
+std::unique_ptr<SessionHandler> g_session_handler;
 
 // Concrete implementation for MozcJni.evalCommand
 jbyteArray JNICALL evalCommand(JNIEnv *env, jclass clazz,
@@ -93,7 +93,7 @@ std::string JstringToCcString(JNIEnv *env, jstring j_string) {
 
 std::unique_ptr<EngineInterface> CreateMobileEngine(
     const std::string &data_file_path) {
-  absl::StatusOr<std::unique_ptr<DataManager>> data_manager =
+  absl::StatusOr<std::unique_ptr<const DataManager>> data_manager =
       DataManager::CreateFromFile(data_file_path);
   if (!data_manager.ok()) {
     LOG(ERROR)
@@ -120,8 +120,8 @@ std::unique_ptr<EngineInterface> CreateMobileEngine(
   return *std::move(engine);
 }
 
-std::unique_ptr<SessionHandlerInterface> CreateSessionHandler(
-    JNIEnv *env, jstring j_data_file_path) {
+std::unique_ptr<SessionHandler> CreateSessionHandler(JNIEnv *env,
+                                                     jstring j_data_file_path) {
   if (env == nullptr) {
     LOG(DFATAL) << "JNIEnv is null";
     return nullptr;
@@ -136,9 +136,7 @@ std::unique_ptr<SessionHandlerInterface> CreateSessionHandler(
     engine = CreateMobileEngine(data_file_path);
   }
   DCHECK(engine);
-  auto result = std::make_unique<SessionHandler>(std::move(engine));
-  result->AddObserver(Singleton<session::SessionUsageObserver>::get());
-  return result;
+  return std::make_unique<SessionHandler>(std::move(engine));
 }
 
 // Does post-load tasks.

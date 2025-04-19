@@ -37,13 +37,21 @@ load(
 )
 load("//bazel:run_build_tool.bzl", "mozc_run_build_tool")
 
-package(default_visibility = ["//:__subpackages__"])
+package(default_visibility = ["//visibility:private"])
 
 mozc_cc_library(
     name = "client_interface",
     hdrs = ["client_interface.h"],
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//gui:__subpackages__",
+        "//mac:__pkg__",
+        "//renderer:__subpackages__",
+        "//session:__pkg__",
+        "//visibility:public",
+        "//win32:__subpackages__",
+    ],
     deps = [
+        "//base/strings:zstring_view",
         "//ipc",
         "//protocol:commands_cc_proto",
         "//protocol:config_cc_proto",
@@ -65,7 +73,14 @@ mozc_cc_library(
         linux = ["MOZC_USE_SVS_JAPANESE"],
         oss = ["MOZC_USE_SVS_JAPANESE"],
     ),
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//gui:__subpackages__",
+        "//mac:__pkg__",
+        "//session:__pkg__",
+        "//unix:__subpackages__",
+        "//visibility:public",
+        "//win32:__subpackages__",
+    ],
     deps = [
         ":client_interface",
         "//base:const",
@@ -78,6 +93,7 @@ mozc_cc_library(
         "//base:version",
         "//base:vlog",
         "//base/strings:assign",
+        "//base/strings:zstring_view",
         "//composer:key_event_util",
         "//config:config_handler",
         "//ipc",
@@ -86,7 +102,6 @@ mozc_cc_library(
         "//protocol:config_cc_proto",
         "//session:key_info_util",
         "//testing:friend_test",
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
@@ -117,6 +132,7 @@ mozc_cc_test(
         "//base:number_util",
         "//base:version",
         "//base/strings:assign",
+        "//base/strings:zstring_view",
         "//composer:key_parser",
         "//config:config_handler",
         "//ipc",
@@ -134,7 +150,12 @@ mozc_cc_library(
     name = "client_mock",
     testonly = True,
     hdrs = ["client_mock.h"],
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//mac:__pkg__",
+        "//session:__pkg__",
+        "//unix:__subpackages__",
+        "//visibility:public",
+    ],
     deps = [
         ":client_interface",
         "//ipc",
@@ -143,17 +164,6 @@ mozc_cc_library(
         "//testing:gunit",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
-    ],
-)
-
-mozc_cc_binary(
-    name = "server_launcher_main",
-    srcs = ["server_launcher_main.cc"],
-    deps = [
-        ":client",
-        "//base:init_mozc",
-        "@com_google_absl//absl/flags:flag",
-        "@com_google_absl//absl/log",
     ],
 )
 
@@ -221,16 +231,6 @@ mozc_cc_binary(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
-    ],
-)
-
-mozc_cc_binary(
-    name = "ping_server_main",
-    srcs = ["ping_server_main.cc"],
-    deps = [
-        ":client",
-        "//base:init_mozc",
-        "@com_google_absl//absl/log",
     ],
 )
 

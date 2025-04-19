@@ -59,7 +59,6 @@
 #include "rewriter/rewriter.h"
 #include "rewriter/rewriter_interface.h"
 
-
 namespace mozc {
 
 absl::StatusOr<std::unique_ptr<Engine>> Engine::CreateDesktopEngine(
@@ -76,18 +75,17 @@ absl::StatusOr<std::unique_ptr<Engine>> Engine::CreateMobileEngine(
 
 absl::StatusOr<std::unique_ptr<Engine>> Engine::CreateEngine(
     std::unique_ptr<const DataManager> data_manager, bool is_mobile) {
-  auto modules = std::make_unique<engine::Modules>();
-  absl::Status modules_status = modules->Init(std::move(data_manager));
+  absl::StatusOr<std::unique_ptr<engine::Modules>> modules_status =
+      engine::Modules::Create(std::move(data_manager));
   if (!modules_status.ok()) {
-    return modules_status;
+    return modules_status.status();
   }
-  return CreateEngine(std::move(modules), is_mobile);
+  return CreateEngine(std::move(modules_status.value()), is_mobile);
 }
 
 absl::StatusOr<std::unique_ptr<Engine>> Engine::CreateEngine(
     std::unique_ptr<engine::Modules> modules, bool is_mobile) {
-  // Since Engine() is a private function, std::make_unique does not work.
-  auto engine = absl::WrapUnique(new Engine());
+  auto engine = std::make_unique<Engine>();
   absl::Status engine_status = engine->Init(std::move(modules), is_mobile);
   if (!engine_status.ok()) {
     return engine_status;
@@ -96,7 +94,7 @@ absl::StatusOr<std::unique_ptr<Engine>> Engine::CreateEngine(
 }
 
 std::unique_ptr<Engine> Engine::CreateEngine() {
-  return absl::WrapUnique(new Engine());
+  return std::make_unique<Engine>();
 }
 
 Engine::Engine() : minimal_converter_(CreateMinimalConverter()) {}
@@ -109,15 +107,14 @@ absl::Status Engine::ReloadModules(std::unique_ptr<engine::Modules> modules,
 
 absl::Status Engine::Init(std::unique_ptr<engine::Modules> modules,
                           bool is_mobile) {
-
   auto immutable_converter_factory = [](const engine::Modules &modules) {
     return std::make_unique<ImmutableConverter>(modules);
   };
 
   auto predictor_factory =
       [is_mobile](const engine::Modules &modules,
-                  const ConverterInterface *converter,
-                  const ImmutableConverterInterface *immutable_converter) {
+                  const ConverterInterface &converter,
+                  const ImmutableConverterInterface &immutable_converter) {
         auto dictionary_predictor =
             std::make_unique<prediction::DictionaryPredictor>(
                 modules, converter, immutable_converter);
@@ -139,7 +136,7 @@ absl::Status Engine::Init(std::unique_ptr<engine::Modules> modules,
     return std::make_unique<Rewriter>(modules);
   };
 
-  auto converter = std::make_unique<Converter>(
+  auto converter = std::make_shared<Converter>(
       std::move(modules), immutable_converter_factory, predictor_factory,
       rewriter_factory);
 
@@ -162,17 +159,17 @@ bool Engine::ReloadAndWait() { return Reload() && Wait(); }
 
 bool Engine::ClearUserHistory() {
   if (converter_) {
-    converter_->rewriter()->Clear();
+    converter_->rewriter().Clear();
   }
   return true;
 }
 
 bool Engine::ClearUserPrediction() {
-  return converter_ && converter_->predictor()->ClearAllHistory();
+  return converter_ && converter_->predictor().ClearAllHistory();
 }
 
 bool Engine::ClearUnusedUserPrediction() {
-  return converter_ && converter_->predictor()->ClearUnusedHistory();
+  return converter_ && converter_->predictor().ClearUnusedHistory();
 }
 
 bool Engine::MaybeReloadEngine(EngineReloadResponse *response) {
@@ -208,8 +205,8 @@ bool Engine::SendEngineReloadRequest(const EngineReloadRequest &request) {
 
 bool Engine::SendSupplementalModelReloadRequest(
     const EngineReloadRequest &request) {
-  if (converter_ && converter_->modules()->GetSupplementalModel()) {
-    converter_->modules()->GetMutableSupplementalModel()->LoadAsync(request);
+  if (converter_) {
+    converter_->modules().GetSupplementalModel().LoadAsync(request);
   }
   return true;
 }

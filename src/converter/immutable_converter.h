@@ -35,7 +35,6 @@
 #include <string>
 #include <vector>
 
-#include "absl/base/attributes.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "converter/connector.h"
@@ -48,7 +47,6 @@
 #include "dictionary/dictionary_interface.h"
 #include "dictionary/pos_group.h"
 #include "dictionary/pos_matcher.h"
-#include "dictionary/suppression_dictionary.h"
 #include "engine/modules.h"
 #include "prediction/suggestion_filter.h"
 #include "request/conversion_request.h"
@@ -63,8 +61,8 @@ class ImmutableConverter : public ImmutableConverterInterface {
   ImmutableConverter &operator=(const ImmutableConverter &) = delete;
   ~ImmutableConverter() override = default;
 
-  ABSL_MUST_USE_RESULT bool ConvertForRequest(
-      const ConversionRequest &request, Segments *segments) const override;
+  [[nodiscard]] bool ConvertForRequest(const ConversionRequest &request,
+                                       Segments *segments) const override;
 
  private:
   FRIEND_TEST(ImmutableConverterTest, AddPredictiveNodes);
@@ -93,7 +91,7 @@ class ImmutableConverter : public ImmutableConverterInterface {
   };
 
   void ExpandCandidates(const ConversionRequest &request,
-                        const std::string &original_key, NBestGenerator *nbest,
+                        absl::string_view original_key, NBestGenerator *nbest,
                         Segment *segment, size_t expand_size) const;
   void InsertDummyCandidates(Segment *segment, size_t expand_size) const;
   Node *Lookup(int begin_pos, const ConversionRequest &request, bool is_reverse,
@@ -101,8 +99,8 @@ class ImmutableConverter : public ImmutableConverterInterface {
   Node *AddCharacterTypeBasedNodes(absl::string_view key_substr,
                                    Lattice *lattice, Node *nodes) const;
 
-  void Resegment(const Segments &segments, const std::string &history_key,
-                 const std::string &conversion_key, Lattice *lattice) const;
+  void Resegment(const Segments &segments, absl::string_view history_key,
+                 absl::string_view conversion_key, Lattice *lattice) const;
 
   void ApplyResegmentRules(size_t pos, Lattice *lattice) const;
   // Returns true resegmentation happened
@@ -117,7 +115,7 @@ class ImmutableConverter : public ImmutableConverterInterface {
                                           Lattice *lattice) const;
   void MakeLatticeNodesForConversionSegments(const Segments &segments,
                                              const ConversionRequest &request,
-                                             const std::string &history_key,
+                                             absl::string_view history_key,
                                              Lattice *lattice) const;
   void MakeLatticeNodesForPredictiveNodes(const Segments &segments,
                                           const ConversionRequest &request,
@@ -126,7 +124,7 @@ class ImmutableConverter : public ImmutableConverterInterface {
   // If the last node ends with "prefix", give an extra
   // wcost penalty. In this case  "無" doesn't tend to appear at
   // user input.
-  void ApplyPrefixSuffixPenalty(const std::string &conversion_key,
+  void ApplyPrefixSuffixPenalty(absl::string_view conversion_key,
                                 Lattice *lattice) const;
 
   bool Viterbi(const Segments &segments, Lattice *lattice) const;
@@ -151,11 +149,6 @@ class ImmutableConverter : public ImmutableConverterInterface {
                         absl::Span<const uint16_t> group,
                         size_t max_candidates_size,
                         InsertCandidatesType type) const;
-
-  void InsertCandidatesForRealtime(const ConversionRequest &request,
-                                   const Lattice &lattice,
-                                   absl::Span<const uint16_t> group,
-                                   Segments *segments) const;
 
   void InsertCandidatesForRealtimeWithCandidateChecker(
       const ConversionRequest &request, const Lattice &lattice,
@@ -200,13 +193,13 @@ class ImmutableConverter : public ImmutableConverterInterface {
                                      absl::Span<const uint16_t> group,
                                      Segments *segments) const;
 
-  const dictionary::DictionaryInterface *dictionary_;
-  const dictionary::DictionaryInterface *suffix_dictionary_;
-  const dictionary::SuppressionDictionary *suppression_dictionary_;
+  const dictionary::DictionaryInterface &dictionary_;
+  const dictionary::DictionaryInterface &suffix_dictionary_;
+  const dictionary::UserDictionaryInterface &user_dictionary_;
   const Connector &connector_;
-  const Segmenter *segmenter_;
-  const dictionary::PosMatcher *pos_matcher_;
-  const dictionary::PosGroup *pos_group_;
+  const Segmenter &segmenter_;
+  const dictionary::PosMatcher &pos_matcher_;
+  const dictionary::PosGroup &pos_group_;
   const SuggestionFilter &suggestion_filter_;
 
   // Cache for POS ids.

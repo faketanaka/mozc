@@ -52,8 +52,6 @@
 #include "testing/gunit.h"
 #include "testing/mozctest.h"
 #include "transliteration/transliteration.h"
-#include "usage_stats/usage_stats.h"
-#include "usage_stats/usage_stats_testing_util.h"
 
 namespace mozc {
 namespace {
@@ -77,11 +75,8 @@ void SetAkann(composer::Composer *composer) {
 class TransliterationRewriterTest : public testing::TestWithTempUserProfile {
  protected:
   void SetUp() override {
-    usage_stats::UsageStats::ClearAllStatsForTest();
     config::ConfigHandler::GetDefaultConfig(&default_config_);
   }
-
-  void TearDown() override { usage_stats::UsageStats::ClearAllStatsForTest(); }
 
   TransliterationRewriter *CreateTransliterationRewriter() const {
     return new TransliterationRewriter(
@@ -91,8 +86,6 @@ class TransliterationRewriterTest : public testing::TestWithTempUserProfile {
   const commands::Request &default_request() const { return default_request_; }
 
   const config::Config &default_config() const { return default_config_; }
-
-  usage_stats::scoped_usage_stats_enabler usage_stats_enabler_;
 
   const testing::MockDataManager mock_data_manager_;
 
@@ -148,9 +141,9 @@ TEST_F(TransliterationRewriterTest, T13nFromComposerTest) {
   std::unique_ptr<TransliterationRewriter> t13n_rewriter(
       CreateTransliterationRewriter());
 
-  composer::Table table;
-  table.InitializeWithRequestAndConfig(default_request(), default_config());
-  composer::Composer composer(&table, &default_request(), &default_config());
+  auto table = std::make_shared<composer::Table>();
+  table->InitializeWithRequestAndConfig(default_request(), default_config());
+  composer::Composer composer(table, default_request(), default_config());
   SetAkann(&composer);
 
   Segments segments;
@@ -196,9 +189,9 @@ TEST_F(TransliterationRewriterTest, KeyOfT13nFromComposerTest) {
   std::unique_ptr<TransliterationRewriter> t13n_rewriter(
       CreateTransliterationRewriter());
 
-  composer::Table table;
-  table.InitializeWithRequestAndConfig(default_request(), default_config());
-  composer::Composer composer(&table, &default_request(), &default_config());
+  auto table = std::make_shared<composer::Table>();
+  table->InitializeWithRequestAndConfig(default_request(), default_config());
+  composer::Composer composer(table, default_request(), default_config());
   InsertASCIISequence("ssh", &composer);
 
   Segments segments;
@@ -207,11 +200,12 @@ TEST_F(TransliterationRewriterTest, KeyOfT13nFromComposerTest) {
 
   commands::Request input;
   input.set_mixed_conversion(true);
-  const ConversionRequest request = ConversionRequestBuilder()
-                                  .SetComposer(composer)
-                                  .SetRequest(input)
-                                  .SetRequestType(ConversionRequest::SUGGESTION)
-                                  .Build();
+  const ConversionRequest request =
+      ConversionRequestBuilder()
+          .SetComposer(composer)
+          .SetRequest(input)
+          .SetRequestType(ConversionRequest::SUGGESTION)
+          .Build();
   {
     // Although the segment key is "っ" as a partial string of the full
     // composition, the transliteration key should be "っsh" as the
@@ -234,9 +228,9 @@ TEST_F(TransliterationRewriterTest, T13nWithMultiSegmentsTest) {
   std::unique_ptr<TransliterationRewriter> t13n_rewriter(
       CreateTransliterationRewriter());
 
-  composer::Table table;
-  table.InitializeWithRequestAndConfig(default_request(), default_config());
-  composer::Composer composer(&table, &default_request(), &default_config());
+  auto table = std::make_shared<composer::Table>();
+  table->InitializeWithRequestAndConfig(default_request(), default_config());
+  composer::Composer composer(table, default_request(), default_config());
 
   // Set kamabokoinbou to composer.
   {
@@ -276,9 +270,9 @@ TEST_F(TransliterationRewriterTest, ComposerValidationTest) {
   std::unique_ptr<TransliterationRewriter> t13n_rewriter(
       CreateTransliterationRewriter());
 
-  composer::Table table;
-  table.InitializeWithRequestAndConfig(default_request(), default_config());
-  composer::Composer composer(&table, &default_request(), &default_config());
+  auto table = std::make_shared<composer::Table>();
+  table->InitializeWithRequestAndConfig(default_request(), default_config());
+  composer::Composer composer(table, default_request(), default_config());
 
   // Set kan to composer.
   {
@@ -322,10 +316,10 @@ TEST_F(TransliterationRewriterTest, RewriteWithSameComposerTest) {
   std::unique_ptr<TransliterationRewriter> t13n_rewriter(
       CreateTransliterationRewriter());
 
-  composer::Table table;
-  table.InitializeWithRequestAndConfig(default_request(), default_config());
+  auto table = std::make_shared<composer::Table>();
+  table->InitializeWithRequestAndConfig(default_request(), default_config());
 
-  composer::Composer composer(&table, &default_request(), &default_config());
+  composer::Composer composer(table, default_request(), default_config());
   SetAkann(&composer);
 
   Segments segments;
@@ -439,9 +433,9 @@ TEST_F(TransliterationRewriterTest, NoKeyWithComposerTest) {
   std::unique_ptr<TransliterationRewriter> t13n_rewriter(
       CreateTransliterationRewriter());
 
-  composer::Table table;
-  table.InitializeWithRequestAndConfig(default_request(), default_config());
-  composer::Composer composer(&table, &default_request(), &default_config());
+  auto table = std::make_shared<composer::Table>();
+  table->InitializeWithRequestAndConfig(default_request(), default_config());
+  composer::Composer composer(table, default_request(), default_config());
   InsertASCIISequence("a", &composer);
 
   Segments segments;
@@ -466,8 +460,8 @@ TEST_F(TransliterationRewriterTest, NoRewriteTest) {
   std::unique_ptr<TransliterationRewriter> t13n_rewriter(
       CreateTransliterationRewriter());
 
-  composer::Table table;
-  table.InitializeWithRequestAndConfig(default_request(), default_config());
+  auto table = std::make_shared<composer::Table>();
+  table->InitializeWithRequestAndConfig(default_request(), default_config());
 
   Segments segments;
   Segment *segment = segments.add_segment();
@@ -504,9 +498,9 @@ TEST_F(TransliterationRewriterTest, MobileT13nTestWith12KeysHiragana) {
   commands::Request request;
   request_test_util::FillMobileRequest(&request);
 
-  composer::Table table;
-  table.InitializeWithRequestAndConfig(request, default_config());
-  composer::Composer composer(&table, &request, &default_config());
+  auto table = std::make_shared<composer::Table>();
+  table->InitializeWithRequestAndConfig(request, default_config());
+  composer::Composer composer(table, request, default_config());
 
   {
     InsertASCIISequence("11#", &composer);
@@ -515,9 +509,11 @@ TEST_F(TransliterationRewriterTest, MobileT13nTestWith12KeysHiragana) {
   Segments segments;
   Segment *segment = segments.add_segment();
   segment->set_key("い、");
-  const commands::Context context;
-  const ConversionRequest rewrite_request(composer, request, context,
-                                          default_config(), {});
+  const ConversionRequest rewrite_request = ConversionRequestBuilder()
+                                                .SetComposer(composer)
+                                                .SetRequest(request)
+                                                .SetConfig(default_config())
+                                                .Build();
   EXPECT_TRUE(t13n_rewriter->Rewrite(rewrite_request, &segments));
 
   // Do not want to show raw keys for implementation
@@ -551,9 +547,9 @@ TEST_F(TransliterationRewriterTest, MobileT13nTestWith12KeysToNumber) {
   commands::Request request;
   request_test_util::FillMobileRequest(&request);
 
-  composer::Table table;
-  table.InitializeWithRequestAndConfig(request, default_config());
-  composer::Composer composer(&table, &request, &default_config());
+  auto table = std::make_shared<composer::Table>();
+  table->InitializeWithRequestAndConfig(request, default_config());
+  composer::Composer composer(table, request, default_config());
 
   {
     InsertASCIISequence("1212", &composer);
@@ -606,9 +602,9 @@ TEST_F(TransliterationRewriterTest, MobileT13nTestWith12KeysFlick) {
   request.set_special_romanji_table(
       commands::Request::TOGGLE_FLICK_TO_HIRAGANA);
 
-  composer::Table table;
-  table.InitializeWithRequestAndConfig(request, default_config());
-  composer::Composer composer(&table, &request, &default_config());
+  auto table = std::make_shared<composer::Table>();
+  table->InitializeWithRequestAndConfig(request, default_config());
+  composer::Composer composer(table, request, default_config());
 
   {
     InsertASCIISequence("1a", &composer);
@@ -658,11 +654,11 @@ TEST_F(TransliterationRewriterTest, MobileT13nTestWithQwertyHiragana) {
       commands::Request::QWERTY_MOBILE_TO_HIRAGANA);
 
   const std::string kShi = "し";
-  composer::Table table;
-  table.InitializeWithRequestAndConfig(client_request, default_config());
+  auto table = std::make_shared<composer::Table>();
+  table->InitializeWithRequestAndConfig(client_request, default_config());
 
   {
-    composer::Composer composer(&table, &client_request, &default_config());
+    composer::Composer composer(table, client_request, default_config());
 
     InsertASCIISequence("shi", &composer);
     EXPECT_EQ(composer.GetQueryForConversion(), kShi);
@@ -681,7 +677,7 @@ TEST_F(TransliterationRewriterTest, MobileT13nTestWithQwertyHiragana) {
   }
 
   {
-    composer::Composer composer(&table, &client_request, &default_config());
+    composer::Composer composer(table, client_request, default_config());
 
     InsertASCIISequence("si", &composer);
     EXPECT_EQ(composer.GetQueryForConversion(), kShi);
@@ -709,9 +705,9 @@ TEST_F(TransliterationRewriterTest, MobileT13nTestWithGodan) {
   request.set_mixed_conversion(true);
   request.set_special_romanji_table(commands::Request::GODAN_TO_HIRAGANA);
 
-  composer::Table table;
-  table.InitializeWithRequestAndConfig(request, default_config());
-  composer::Composer composer(&table, &request, &default_config());
+  auto table = std::make_shared<composer::Table>();
+  table->InitializeWithRequestAndConfig(request, default_config());
+  composer::Composer composer(table, request, default_config());
   {
     InsertASCIISequence("<'de", &composer);
     EXPECT_EQ(composer.GetQueryForConversion(), "あん゜で");
@@ -761,8 +757,8 @@ TEST_F(TransliterationRewriterTest, MobileT13nTestValidateGodanT13nTable) {
   request.set_mixed_conversion(true);
   request.set_special_romanji_table(commands::Request::GODAN_TO_HIRAGANA);
 
-  composer::Table table;
-  table.InitializeWithRequestAndConfig(request, default_config());
+  auto table = std::make_shared<composer::Table>();
+  table->InitializeWithRequestAndConfig(request, default_config());
 
   // Expected t13n of Godan keyboard.
   std::vector<const char *> keycode_to_t13n_map(
@@ -793,7 +789,7 @@ TEST_F(TransliterationRewriterTest, MobileT13nTestValidateGodanT13nTable) {
       continue;
     }
 
-    composer::Composer composer(&table, &request, &default_config());
+    composer::Composer composer(table, request, default_config());
 
     std::string ascii_input(1, static_cast<char>(i));
     InsertASCIISequence(ascii_input, &composer);
@@ -837,10 +833,10 @@ TEST_F(TransliterationRewriterTest, T13nOnSuggestion) {
 
   const std::string kXtsu = "っ";
 
-  composer::Table table;
-  table.InitializeWithRequestAndConfig(client_request, default_config());
+  auto table = std::make_shared<composer::Table>();
+  table->InitializeWithRequestAndConfig(client_request, default_config());
   {
-    composer::Composer composer(&table, &client_request, &default_config());
+    composer::Composer composer(table, client_request, default_config());
 
     InsertASCIISequence("ssh", &composer);
     EXPECT_EQ(composer.GetQueryForPrediction(), kXtsu);
@@ -870,10 +866,10 @@ TEST_F(TransliterationRewriterTest, T13nOnPartialSuggestion) {
 
   const std::string kXtsu = "っ";
 
-  composer::Table table;
-  table.InitializeWithRequestAndConfig(client_request, default_config());
+  auto table = std::make_shared<composer::Table>();
+  table->InitializeWithRequestAndConfig(client_request, default_config());
   {
-    composer::Composer composer(&table, &client_request, &default_config());
+    composer::Composer composer(table, client_request, default_config());
 
     InsertASCIISequence("ssh", &composer);  // "っsh|"
     EXPECT_EQ(composer.GetQueryForPrediction(), kXtsu);
